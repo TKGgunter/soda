@@ -1,4 +1,3 @@
-// Made primarily with Claude ai.
 package soda
 
 import "core:bytes"
