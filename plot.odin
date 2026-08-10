@@ -150,7 +150,7 @@ Theme_Default :: Theme {
     panel_background = Theme_Default_Background,
     grid_color = Theme_Default_Grid,
     text_color = Theme_Default_Text,
-    font_size = 11 
+    font_size = 20
 }
 
 

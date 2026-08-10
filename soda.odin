@@ -567,7 +567,6 @@ delete_dataframe :: proc(df: DataFrame, loc := #caller_location) -> runtime.Allo
         case [dynamic]bool: delete(v, loc)
         }
     }
-    fmt.println("here?")
     return delete(df.data, loc)
 }
 
