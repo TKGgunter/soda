@@ -37,12 +37,33 @@ reader_open :: proc(filename: string, options: ^cq.carquet_reader_options_t) -> 
     return Reader{reader}, nil
 }
 
-// NOTE: we are assuming there is no nulls in the data
-read_parquet :: proc(filename: string, allocator:= context.allocator) -> (DataFrame, Error){
-    reader, reader_err := reader_open(filename, nil)
-    if reader_err != nil {
-        return {}, reader_err
+@private
+read_metadata :: proc(reader: ^cq.carquet_reader_t) -> map[string]string {
+
+    n_entries := cq.carquet_reader_num_metadata(reader)
+    metadata := make(map[string]string)
+
+    key :cstring= nil
+    value :cstring= nil
+    for index in 0..<n_entries {
+        status := cq.carquet_reader_get_metadata(reader, index, &key, &value)
+        
+        #partial switch status {
+        case .OK:
+            metadata[strings.clone_from_cstring(key)] = strings.clone_from_cstring(value)
+        case .ERROR_INVALID_METADATA:
+            fmt.eprintln("Error invalid metadata.")
+        case:
+            fmt.eprintln("Unexpected error.")
+        }
+
     }
+    return metadata
+}
+
+// NOTE: we are assuming there is no nulls in the data
+read_parquet :: proc(filename: string, allocator:= context.allocator) -> (dataframe: DataFrame, metadata: map[string]string, error: Error){
+    reader := reader_open(filename, nil) or_return
     defer cq.carquet_reader_close(reader._reader)
 
     err, _ := ERROR_OBJ.?
@@ -51,6 +72,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (DataFr
     n_rows := cq.carquet_reader_num_rows(reader._reader)
     schema := cq.carquet_reader_schema(reader._reader)
 
+    metadata = read_metadata(reader._reader)
 
     data := make(map[string]Column)
     for column_index in 0..<n_columns {
@@ -72,7 +94,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (DataFr
             n := cq.carquet_column_read_batch(col, raw_data(buf), i64(n_rows), nil, nil)
             // FUTURE: we assert here because we expect that all values will be
             // read at once and I am unclear if that is how carquet will be have. 
-            assert(n == i64(n_rows))
+            assert(n == i64(n_rows), fmt.aprintf("Expected %v got %v", n_rows, n))
             data[column_name] = buf
         }
         case .INT64: {
@@ -80,7 +102,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (DataFr
             n := cq.carquet_column_read_batch(col, raw_data(buf), i64(n_rows), nil, nil)
             // FUTURE: we assert here because we expect that all values will be
             // read at once and I am unclear if that is how carquet will be have. 
-            assert(n == i64(n_rows))
+            assert(n == i64(n_rows), fmt.aprintf("Expected %v got %v", n_rows, n))
             data[column_name] = buf
         }
         case .BYTE_ARRAY: {
@@ -98,6 +120,5 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (DataFr
         }
     }
 
-
-    return DataFrame{ int(n_rows), data }, nil
+    return DataFrame{ int(n_rows), data }, metadata, nil
 }
