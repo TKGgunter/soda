@@ -22,9 +22,6 @@ head :: soda.head
 
 main :: proc() {
 
-    // By default 
-    soda.init_formatter()
-
 		data, success := os.read_entire_file("iris.csv", context.allocator)
     defer delete(data, context.allocator)
     df, _ := soda.parse_csv(string(data))
