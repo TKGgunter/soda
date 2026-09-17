@@ -14,9 +14,10 @@ Reader :: struct {
 
 Error :: Maybe(cq.carquet_error)
 
-init :: proc() {
+@(init)
+init_carquet_reader :: proc "contextless" () {
     if ERROR_OBJ == nil {
-        err := cq.carquet_error_t{}
+        err := cq.carquet_error{}
         cq.carquet_error_init(&err)
         ERROR_OBJ = err
     }
@@ -91,25 +92,33 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
         #partial switch cq_physical_type {
         case .DOUBLE: {
             buf := make([dynamic]f64, n_rows, n_rows, allocator)
-            n := cq.carquet_column_read_batch(col, raw_data(buf), i64(n_rows), nil, nil)
-            // FUTURE: we assert here because we expect that all values will be
-            // read at once and I am unclear if that is how carquet will be have. 
-            assert(n == i64(n_rows), fmt.aprintf("Expected %v got %v", n_rows, n))
+
+            if read_batch(col, buf) {
+                fmt.eprintln("Parquet reader failed to read column ", column_name)
+                return dataframe, metadata, error
+            }
+
             data[column_name] = buf
         }
         case .INT64: {
             buf := make([dynamic]int, n_rows, n_rows, allocator)
-            n := cq.carquet_column_read_batch(col, raw_data(buf), i64(n_rows), nil, nil)
-            // FUTURE: we assert here because we expect that all values will be
-            // read at once and I am unclear if that is how carquet will be have. 
-            assert(n == i64(n_rows), fmt.aprintf("Expected %v got %v", n_rows, n))
+
+            if read_batch(col, buf) {
+                fmt.eprintln("Parquet reader failed to read column ", column_name)
+                return dataframe, metadata, error
+            }
+
             data[column_name] = buf
         }
         case .BYTE_ARRAY: {
             buf := make([dynamic]string, n_rows, n_rows, allocator)
-            n := cq.carquet_column_read_batch(col, raw_data(buf), i64(n_rows), nil, nil)
 
-            for i in 0..<n {
+            if read_batch(col, buf) {
+                fmt.eprintln("Parquet reader failed to read column ", column_name)
+                return dataframe, metadata, error
+            }
+
+            for i in 0..< n_rows {
                 buf[i]  = strings.clone(buf[i], allocator)
             }
         }
@@ -121,4 +130,26 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
     }
 
     return DataFrame{ int(n_rows), data }, metadata, nil
+}
+
+@private
+read_batch :: proc(col: ^cq.carquet_column_reader_t, buf: [dynamic]$E) -> (is_error: bool) {
+    offset :i64= 0
+    is_more_data := true
+    n_rows := i64(len(buf))
+    for is_more_data {
+        n := cq.carquet_column_read_batch(col, raw_data(buf[offset:]), n_rows - offset, nil, nil)
+        // TODO: Look into using the following function to retrieve the error
+        // cq.carquet_column_read_batch_ex
+        offset += n
+
+        switch {
+        case n == 0: is_more_data = false
+        case n < 0: {
+            // TODO return a useful error.
+            return true
+        }
+        }
+    }
+    return false
 }
