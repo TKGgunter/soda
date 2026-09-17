@@ -12,6 +12,8 @@ import "core:slice"
 //      function signature should not be a pointer but a value.
 //
 // [x] Move calculation to a math.odin file.
+// 
+// [X] restructure source code and create an example dir.
 //
 // [-] Complete petal analysis and create a set of tests as an example.
 //
@@ -19,8 +21,8 @@ import "core:slice"
 //      caller. In these cases the function should take an allocator.
 //
 // [-] add booleans
-// 
-// [ ] restructure source code and create an example dir.
+//
+// [ ] replace prints e.g. eprintln with logging
 //
 // [ ] complete plotting?
 //
