@@ -22,12 +22,10 @@ timeline for feature implementation, but I expect to "need" them in the short
 term. So they may come sooner than later. Below is a more complete list of
 features I expect to add.
 
+- [X] read parquet file
 - [ ] date types
-- [ ] i32 and f32 types
-- [ ] 3D vector types i.e. `[3]f32`
 - [ ] query parser
 - [ ] write csv file
-- [-] read parquet file
 - [ ] handle missing data
 - [ ] plotting interface (currently the plotting interface is sketch out in
   code, but has been lightly used)
@@ -37,5 +35,7 @@ features I expect to add.
   is "nice" primarily because Python is interpreted and state is maintained,
   naturally, between statements. This allows users explore and tweak algorithms
   without needing to reload or reconstruct state.
+- [ ] i32 and f32 types
+- [ ] 3D vector types i.e. `[3]f32`
 - [ ] simd optimizations
 - [ ] ...
