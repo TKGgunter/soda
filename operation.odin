@@ -277,6 +277,9 @@ where T == DataFrame || T == DataFrameSlice
             ops.eq_str__arr_str,
             ops.eq_arr_str__str,
             ops.eq_arr_str__arr_str,
+            ops.eq_bool__arr_bool,
+            ops.eq_arr_bool__bool,
+            ops.eq_arr_bool__arr_bool,
         )
     }
     case .NotEq: {
@@ -298,6 +301,9 @@ where T == DataFrame || T == DataFrameSlice
             ops.eq_str__arr_str,
             ops.eq_arr_str__str,
             ops.eq_arr_str__arr_str,
+            ops.eq_bool__arr_bool,
+            ops.eq_arr_bool__bool,
+            ops.eq_arr_bool__arr_bool,
         )
         for &it in rt {
             it = !it
@@ -322,6 +328,9 @@ where T == DataFrame || T == DataFrameSlice
             ops.lt_str__arr_str,
             ops.lt_arr_str__str,
             ops.lt_arr_str__arr_str,
+            ops.lt_bool__arr_bool,
+            ops.lt_arr_bool__bool,
+            ops.lt_arr_bool__arr_bool,
         )
     }
     case .LessEq: {
@@ -343,6 +352,9 @@ where T == DataFrame || T == DataFrameSlice
             ops.lte_str__arr_str,
             ops.lte_arr_str__str,
             ops.lte_arr_str__arr_str,
+            ops.lte_bool__arr_bool,
+            ops.lte_arr_bool__bool,
+            ops.lte_arr_bool__arr_bool,
         )
     }
     case .Greater: {
@@ -364,6 +376,9 @@ where T == DataFrame || T == DataFrameSlice
             ops.gt_str__arr_str,
             ops.gt_arr_str__str,
             ops.gt_arr_str__arr_str,
+            ops.gt_bool__arr_bool,
+            ops.gt_arr_bool__bool,
+            ops.gt_arr_bool__arr_bool,
         )
     }
     case .GreaterEq: {
@@ -385,6 +400,9 @@ where T == DataFrame || T == DataFrameSlice
             ops.gte_str__arr_str,
             ops.gte_arr_str__str,
             ops.gte_arr_str__arr_str,
+            ops.gte_bool__arr_bool,
+            ops.gte_arr_bool__bool,
+            ops.gte_arr_bool__arr_bool,
         )
     }
     case .And: {
@@ -412,21 +430,24 @@ where T == DataFrame || T == DataFrameSlice
 exec :: proc(
     left: InternalOperand,
     right: InternalOperand,
-    cmd__int__arr_int:     proc(int, []int, runtime.Allocator) -> Mask,
-    cmd__int__arr_f64:     proc(int, []f64, runtime.Allocator) -> Mask,
-    cmd__f64__arr_f64:     proc(f64, []f64, runtime.Allocator) -> Mask,
-    cmd__f64__arr_int:     proc(f64, []int, runtime.Allocator) -> Mask,
-    cmd__arr_int__int:     proc([]int, int, runtime.Allocator) -> Mask,
-    cmd__arr_int__f64:     proc([]int, f64, runtime.Allocator) -> Mask,
-    cmd__arr_f64__f64:     proc([]f64, f64, runtime.Allocator) -> Mask,
-    cmd__arr_f64__int:     proc([]f64, int, runtime.Allocator) -> Mask,
-    cmd__arr_int__arr_int: proc([]int, []int, runtime.Allocator) -> Mask,
-    cmd__arr_int__arr_f64: proc([]int, []f64, runtime.Allocator) -> Mask,
-    cmd__arr_f64__arr_f6:  proc([]f64, []f64, runtime.Allocator) -> Mask,
-    cmd__arr_f64__arr_int: proc([]f64, []int, runtime.Allocator) -> Mask,
-    cmd__str__arr_str:     proc(string, []string, runtime.Allocator) -> Mask,
-    cmd__arr_str__str:     proc([]string, string, runtime.Allocator) -> Mask,
-    cmd__arr_str__arr_str: proc([]string, []string, runtime.Allocator) -> Mask,
+    cmd__int__arr_int:       proc(int, []int, runtime.Allocator) -> Mask,
+    cmd__int__arr_f64:       proc(int, []f64, runtime.Allocator) -> Mask,
+    cmd__f64__arr_f64:       proc(f64, []f64, runtime.Allocator) -> Mask,
+    cmd__f64__arr_int:       proc(f64, []int, runtime.Allocator) -> Mask,
+    cmd__arr_int__int:       proc([]int, int, runtime.Allocator) -> Mask,
+    cmd__arr_int__f64:       proc([]int, f64, runtime.Allocator) -> Mask,
+    cmd__arr_f64__f64:       proc([]f64, f64, runtime.Allocator) -> Mask,
+    cmd__arr_f64__int:       proc([]f64, int, runtime.Allocator) -> Mask,
+    cmd__arr_int__arr_int:   proc([]int, []int, runtime.Allocator) -> Mask,
+    cmd__arr_int__arr_f64:   proc([]int, []f64, runtime.Allocator) -> Mask,
+    cmd__arr_f64__arr_f6:    proc([]f64, []f64, runtime.Allocator) -> Mask,
+    cmd__arr_f64__arr_int:   proc([]f64, []int, runtime.Allocator) -> Mask,
+    cmd__str__arr_str:       proc(string, []string, runtime.Allocator) -> Mask,
+    cmd__arr_str__str:       proc([]string, string, runtime.Allocator) -> Mask,
+    cmd__arr_str__arr_str:   proc([]string, []string, runtime.Allocator) -> Mask,
+    cmd__bool__arr_bool:     proc(bool, []bool, runtime.Allocator) -> Mask,
+    cmd__arr_bool__bool:     proc([]bool, bool, runtime.Allocator) -> Mask,
+    cmd__arr_bool__arr_bool: proc([]bool, []bool, runtime.Allocator) -> Mask,
 
     allocator := context.temp_allocator
 ) -> (mask: Mask) {
@@ -540,7 +561,7 @@ exec :: proc(
         }
         case []bool: {
             switch r in right.(ColumnSlice) {
-            case []bool: {} // TODO cmd__arr_bool__arr_bool(l, r, allocator)
+            case []bool: cmd__arr_bool__arr_bool(l, r, allocator)
             case []int, []f64, []string: {
                 fmt.eprintln("Attempting to compare a numeric or string to a boolean. This is not valid. Booleans can only be compared against booleans.")
             }

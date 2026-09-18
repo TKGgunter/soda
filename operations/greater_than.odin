@@ -18,6 +18,9 @@ gt_arr_f64__arr_int :: proc(left: []f64, right: []int, allocator: runtime.Alloca
 gt_str__arr_str :: proc(left: string, right: []string, allocator: runtime.Allocator) -> Mask { return _gt__XX__arr_XX(left, right, allocator) }
 gt_arr_str__str :: proc(left: []string, right: string, allocator: runtime.Allocator) -> Mask { return _gt__arr_XX__XX(left, right, allocator) }
 gt_arr_str__arr_str :: proc(left: []string, right: []string, allocator: runtime.Allocator) -> Mask { return _gt__arr_XX__arr_XX(left, right, allocator) }
+gt_bool__arr_bool :: proc(left: bool, right: []bool, allocator: runtime.Allocator) -> Mask { panic("Cannot compare booleans using greater than or less than.") }
+gt_arr_bool__bool :: proc(left: []bool, right: bool, allocator: runtime.Allocator) -> Mask { panic("Cannot compare booleans using greater than or less than.") }
+gt_arr_bool__arr_bool :: proc(left: []bool, right: []bool, allocator: runtime.Allocator) -> Mask { panic("Cannot compare booleans using greater than or less than.") }
 
 @(private="file")
 _gt__arr_XX__arr_YY :: proc(left: []$T, right: []$V, allocator:= context.temp_allocator) -> Mask {
