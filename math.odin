@@ -21,6 +21,7 @@ min_in_columnslice :: proc(column: ColumnSlice) -> (min: Data, ok: bool) {
     case []string: min, ok = slice.min(c[:])
     case []bool:
         fmt.eprintln("booleans are not ordered types. Request to find minimum failed.")
+        ok = false
         return
     }
     return
@@ -42,6 +43,7 @@ max_in_columnslice :: proc(column: ColumnSlice) -> (max: Data, ok: bool) {
     case []string: max, ok = slice.max(c[:])
     case []bool : {
         fmt.eprintln("booleans are not ordered types. Request to find maximum failed.")
+        ok = false
         return
     }
     }
@@ -63,6 +65,7 @@ range_columnslice :: proc(column: ColumnSlice) -> (min, max: Data, ok: bool) {
     case []string : min, max, ok = slice.min_max(c[:])
     case []bool:
         fmt.eprintln("booleans are not ordered types. Request to find minimum failed.")
+        ok = false
     }
     return
 }
@@ -146,10 +149,12 @@ std_columnslice :: proc(c: ColumnSlice) -> (rt: Data, success: bool) {
         }
     }
     case []string: {
+        success = false
         fmt.eprintln("Improper calculation request. Attempted to calculate the standard deviation of a string.")
         return
     }
     case []bool: {
+        success = false
         fmt.eprintln("Improper calculation request. Attempted to calculate the standard deviation of a boolean.")
         return
     }
