@@ -93,7 +93,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
         case .DOUBLE: {
             buf := make([dynamic]f64, n_rows, n_rows, allocator)
 
-            if read_batch(col, buf) {
+            if !read_batch(col, buf) {
                 fmt.eprintln("Parquet reader failed to read column ", column_name)
                 return dataframe, metadata, error
             }
@@ -103,7 +103,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
         case .INT64: {
             buf := make([dynamic]int, n_rows, n_rows, allocator)
 
-            if read_batch(col, buf) {
+            if !read_batch(col, buf) {
                 fmt.eprintln("Parquet reader failed to read column ", column_name)
                 return dataframe, metadata, error
             }
@@ -113,13 +113,20 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
         case .BYTE_ARRAY: {
             buf := make([dynamic]string, n_rows, n_rows, allocator)
 
-            if read_batch(col, buf) {
+            if !read_batch(col, buf) {
                 fmt.eprintln("Parquet reader failed to read column ", column_name)
                 return dataframe, metadata, error
             }
 
             for i in 0..< n_rows {
                 buf[i]  = strings.clone(buf[i], allocator)
+            }
+        }
+        case .BOOLEAN: {
+            buf := make([dynamic]bool, n_rows, n_rows, allocator)
+            if !read_batch(col, buf) {
+                fmt.eprintln("Parquet reader failed to read column ", column_name)
+                return dataframe, metadata, error
             }
         }
         case: {
@@ -133,7 +140,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
 }
 
 @private
-read_batch :: proc(col: ^cq.carquet_column_reader_t, buf: [dynamic]$E) -> (is_error: bool) {
+read_batch :: proc(col: ^cq.carquet_column_reader_t, buf: [dynamic]$E) -> (ok: bool) {
     offset :i64= 0
     is_more_data := true
     n_rows := i64(len(buf))
@@ -146,10 +153,9 @@ read_batch :: proc(col: ^cq.carquet_column_reader_t, buf: [dynamic]$E) -> (is_er
         switch {
         case n == 0: is_more_data = false
         case n < 0: {
-            // TODO return a useful error.
-            return true
+            return false
         }
         }
     }
-    return false
+    return true
 }
