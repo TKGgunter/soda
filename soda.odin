@@ -15,23 +15,24 @@ import "core:slice"
 // 
 // [X] restructure source code and create an example dir.
 //
+// [X] add booleans
+//
+// [ ] complete plotting?
+//      [ ] simple internal scatter plot
+//
 // [-] Complete petal analysis and create a set of tests as an example.
 //
 // [-] Review function which allocate memory and return the allocations to the
 //      caller. In these cases the function should take an allocator.
 //
-// [-] add booleans
-//
 // [ ] replace prints e.g. eprintln with logging
 //
-// [ ] complete plotting?
-//
 // [ ] set nulls
+//     look at https://arrow.apache.org/docs/format/Intro.html#support-for-null-values
 //
 // [ ] add asserts to insure dataframe columns have consistant lengths and that
 // the lengths are accurate to the n_row
 //
-// [ ] look at https://arrow.apache.org/docs/format/Intro.html#support-for-null-values
 //
 // [ ] clean up semantics. When to return a literal versus a pointer. How to
 //      name things. Today the conventions are abit all over the place.
@@ -334,8 +335,7 @@ append_row :: proc(df: ^DataFrame, row: RowLiteral) -> (success: bool) {
     // Test the row names and type before appending to insure we don't dirty
     // our dataframe.
     if len(df.data) != len(row) {
-        // TODO, make nice and helpful
-        fmt.eprintln("dataframe and row have un-equal number of columns.")
+        fmt.eprintfln("Dataframe and row have un-equal number of columns. Dataframe length %v  Row length %v", len(df.data), len(row))
         return success
     }
 
@@ -388,10 +388,7 @@ append_row :: proc(df: ^DataFrame, row: RowLiteral) -> (success: bool) {
 
 
 append_column :: proc(df: ^DataFrame, column_name: string, column: Column) -> bool {
-    // TODO:
-    // Why couldn't I use the parameter variable?
-    c := column
-    if df.n_rows != len_column(c) {
+    if df.n_rows != len_column(column) {
         return false
     }
 
@@ -399,21 +396,20 @@ append_column :: proc(df: ^DataFrame, column_name: string, column: Column) -> bo
         return false
     } else {
         cn := strings.clone(column_name, df.data.allocator)
-        df.data[cn] = c
+        df.data[cn] = column
     }
     return true
 }
 
-// NOTE: this function eats df2, the caller should no longer use it
-// TODO: what is odin's convention here
-// assumes that the allocators of the two dataframes are the same.
-append_columnwise :: proc(df1: ^DataFrame, df2: ^DataFrame) -> bool {
+// This function eats df2, the caller should no longer use it as it's contents
+// are owned by df1
+append_columnwise :: proc(df1: ^DataFrame, df2: ^DataFrame) -> (success: bool) {
     if df1.n_rows != df2.n_rows {
+        fmt.eprintln("Dataframe 1 and 2 do not have the same number of rows.")
         return false
     }
 
     if df1.data.allocator != df2.data.allocator {
-        // TODO we can write a fix for this.
         fmt.eprintln("Dataframe 1 and 2 use different allocators, append task aborted.")
         return false
     }
@@ -431,8 +427,66 @@ append_columnwise :: proc(df1: ^DataFrame, df2: ^DataFrame) -> bool {
     return true
 }
 
-// TODO
-append_rowwise :: proc() -> bool {
+append_rowwise :: proc(df1: ^DataFrame, df2: ^DataFrame) -> (success: bool) {
+
+    if len(df1.data) != len(df2.data) {
+        fmt.eprintfln("Dataframe and row have un-equal number of columns. Dataframe length %v  Row length %v", len(df1.data), len(df2.data))
+        return false
+    }
+
+    for key, column2 in df2.data {
+        _v, v_ok := df1.data[key]
+        if v_ok == false {
+            fmt.eprintln("Key in dataframe 2 not found in dataframe 1. Key: ", key)
+            return false
+        }
+
+        switch v in _v {
+        case [dynamic]int: {
+            if _, ok := column2.([dynamic]int); ok == false {
+                return false
+            }
+        }
+        case [dynamic]f64: {
+            if _, ok := column2.([dynamic]f64); ok == false {
+                return false
+            }
+        }
+        case [dynamic]string: {
+            if _, ok := column2.([dynamic]string); ok == false {
+                return false
+            }
+        }
+        case [dynamic]bool: {
+            if _, ok := column2.([dynamic]bool); ok == false {
+                return false
+            }
+        }
+        }
+    }
+
+    for key, column2 in df2.data {
+        _v1, _ := df1.data[key]
+
+        switch &v1 in _v1 {
+        case [dynamic]int: {
+            v2, _ := column2.([dynamic]int)
+            append_elems(&v1, ..v2[:])
+        }
+        case [dynamic]f64: {
+            v2, _ := column2.([dynamic]f64)
+            append_elems(&v1, ..v2[:])
+        }
+        case [dynamic]string: {
+            v2, _ := column2.([dynamic]string)
+            append_elems(&v1, ..v2[:])
+        }
+        case [dynamic]bool: {
+            v2, _ := column2.([dynamic]bool)
+            append_elems(&v1, ..v2[:])
+        }
+        }
+    }
     return false
 }
 
@@ -482,36 +536,13 @@ tail_dataframe :: proc(df: DataFrame) {
 unique :: proc { unique_column, unique_columnslice }
 
 unique_column :: proc(column: Column, allocator:= context.allocator) -> ColumnSlice {
-    // TODO do we need to resize the buffer, since we will not be using all of it?
-    // TODO we need a column to columnslice function we can use to compress some of this redundant code.
     rt := ColumnSlice({})
-    switch c in column {
-    case [dynamic]int : {
-        unique_column := make([]int, len(c), allocator)
-        copy(unique_column, c[:])
-        rt = slice.unique(unique_column)
-    }
-    case [dynamic]f64 : {
-        unique_column := make([]f64, len(c), allocator)
-        copy(unique_column, c[:])
-        rt = slice.unique(unique_column)
-    }
-    case [dynamic]string : {
-        unique_column := make([]string, len(c), allocator)
-        copy(unique_column, c[:])
-        rt = slice.unique(unique_column)
-    }
-    case [dynamic]bool : {
-        unique_column := make([]bool, len(c), allocator)
-        copy(unique_column, c[:])
-        rt = slice.unique(unique_column)
-    }
-    }
-    return rt
+    column_slice, _ := get_slice_column_to_columnslice(column, 0, len_column(column))
+
+    return unique_columnslice(column_slice)
 }
 
 unique_columnslice :: proc(column: ColumnSlice, allocator:= context.allocator) -> ColumnSlice {
-    // TODO do we need to resize the buffer, since we will not be using all of it?
     rt := ColumnSlice({})
     switch c in column {
     case []int : {
@@ -610,4 +641,3 @@ init_formatter :: proc "contextless" () {
     fmt.register_user_formatter(Column, column_formatter)
     fmt.register_user_formatter(ColumnSlice, columnslice_formatter)
 }
-
