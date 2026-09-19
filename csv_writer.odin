@@ -93,7 +93,7 @@ write_csv :: proc(df: DataFrame, filename: string, include_type_header:= true) -
     return
 }
 
-@(private="file")
+@(private)
 _expect_column_equal :: proc(t: ^testing.T, name: string, want: [dynamic]$T, got_col: Column, loc := #caller_location) {
     got, ok := got_col.([dynamic]T)
     if !testing.expectf(t, ok, "column %q: loaded with a different type than it was written", name, loc=loc) {
@@ -107,7 +107,7 @@ _expect_column_equal :: proc(t: ^testing.T, name: string, want: [dynamic]$T, got
     }
 }
 
-@(private="file")
+@(private)
 _expect_dataframes_equal :: proc(t: ^testing.T, want, got: DataFrame, loc := #caller_location) {
     testing.expect_value(t, got.n_rows, want.n_rows, loc=loc)
     testing.expect_value(t, len(got.data), len(want.data), loc=loc)
