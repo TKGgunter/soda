@@ -23,9 +23,9 @@ term. So they may come sooner than later. Below is a more complete list of
 features I expect to add.
 
 - [X] read parquet file
+- [X] write csv file
 - [ ] date types
 - [ ] query parser
-- [ ] write csv file
 - [ ] handle missing data
 - [ ] plotting interface (currently the plotting interface is sketch out in
   code, but has been lightly used)
