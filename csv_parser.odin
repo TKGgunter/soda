@@ -42,6 +42,8 @@ Type_Mismatch_Error :: struct {
 // Reads CSV data from a file into a DataFrame.
 read_csv :: proc(file: ^os.File, allocator := context.allocator) -> (df: DataFrame, err: Parse_Error) {
     buf, file_err := os.read_entire_file(file, allocator)
+    defer delete(buf)
+
     if file_err != nil {
         return df, file_err
     }
@@ -133,6 +135,7 @@ _is_type_hint_row :: proc(row: []string) -> bool {
         case "int", "integer", "i":
         case "float", "f64", "f":
         case "string", "str", "s":
+        case "boolean", "bool", "b":
         case:
             return false
         }
@@ -158,6 +161,8 @@ _parse_type_hint_row :: proc(row: []string, n_cols: int, allocator := context.al
             types[i] = .Float
         case "string", "str", "s":
             types[i] = .String
+        case "boolean", "bool", "b":
+            types[i] = .Boolean
         case:
             types[i] = .String
         }

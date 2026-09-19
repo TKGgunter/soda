@@ -1,5 +1,6 @@
 package soda
 
+import "core:sort"
 import "base:runtime"
 import "core:fmt"
 import "core:strings"
@@ -91,7 +92,7 @@ make_dataframe_from_literal :: proc(column_names: []string, columns: ..ColumnSli
     
     n_columns := len(column_names)
     if n_columns != len(columns) {
-        runtime.panic("number of columns are not the same.")
+        panic("number of columns are not the same.")
     }
     n_rows := 0
     for &c, i in columns {
@@ -101,7 +102,7 @@ make_dataframe_from_literal :: proc(column_names: []string, columns: ..ColumnSli
             
         } else {
             if n_rows != len_column(c) {
-                runtime.panic("column lengths are not the same")
+                panic("column lengths are not the same")
             }
         }
     }
@@ -136,7 +137,7 @@ make_dataframe_from_literal :: proc(column_names: []string, columns: ..ColumnSli
         }
     }
 
-    return DataFrame { n_rows=n_rows, data=m}
+    return DataFrame { n_rows=n_rows, data=m }
 }
 
 
@@ -327,6 +328,22 @@ where T == DataFrame || T == DataFrameSlice {
         }
     }
     return row, true
+}
+
+get_data :: proc(df: $T, key: ColumnName, index: int) -> (Data, bool) 
+where T == DataFrame || T == DataFrameSlice {
+    if index >= df.n_rows {
+        // TODO: log level error
+        fmt.eprintln("Index out of range.")
+        return nil, false
+    }
+
+    column, ok := get_columnslice(df, key)
+    if ok == false {
+        return nil, false
+    }
+
+    return get(column, index)
 }
 
 
@@ -596,6 +613,7 @@ delete_dataframe :: proc(df: DataFrame, loc := #caller_location) -> runtime.Allo
             for it in v {
                 delete(it, loc=loc)
             }
+            delete(v, loc)
         }
         case [dynamic]bool: delete(v, loc)
         }
