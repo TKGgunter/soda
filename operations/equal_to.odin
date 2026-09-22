@@ -237,10 +237,7 @@ t_eq__arr_XX__YY :: proc(t: ^testing.T) {
 
         expect:[]bool= {false, true, false, false}
 
-        // m:= _eq__arr_XX__YY(a, b)
-        // TODO this fails and I would like to know why
-        m:= eq_arr_int__f64(a, b, context.temp_allocator)
-
+        m:= _eq__arr_XX__YY(a, b)
         for i in 0..<len(a) {
             testing.expectf(t, expect[i]==m[i], FAILURE_STRING, expect[i], m[i], i)
         }
