@@ -1,0 +1,53 @@
+#!/bin/sh
+#
+# Blocks push to refs/heads/main if `odin test .` fails against the exact
+# commit being pushed — not your working tree, which may have uncommitted
+# or untracked changes.
+#
+# Activate with:
+#   git config core.hooksPath .githooks
+# Bypass with:
+#   git push --no-verify
+
+protected_branch="refs/heads/main"
+zero_sha="0000000000000000000000000000000000000000"
+
+tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/soda-pre-push.XXXXXX")
+trap 'rm -rf "$tmp_root"' EXIT
+
+# Git feeds one line per ref being pushed on stdin, in the form:
+#   <local ref> <local sha1> <remote ref> <remote sha1>
+# `read` pulls one line into these four variables each time through the
+# loop; when it hits end-of-file (no more lines) it returns non-zero and
+# the loop ends. This is how a single `git push` with multiple branches
+# (e.g. `git push origin main feature-x`) gets checked one ref at a time.
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # local_sha is all zeros when this ref update is a branch *deletion* —
+    # there's no commit to extract or test, so move on to the next line.
+    [ "$local_sha" = "$zero_sha" ] && continue
+
+    # remote_ref is the ref name on the remote (what this update targets on
+    # origin), not your local branch name — checking it is what still
+    # catches `git push origin my-local-branch:main`. Anything not targeting
+    # main is left alone; skip to the next line.
+    [ "$remote_ref" = "$protected_branch" ] || continue
+
+    tmp_dir="$tmp_root/$local_sha"
+    mkdir -p "$tmp_dir"
+
+    echo "pre-push: extracting $local_sha into $tmp_dir to run tests..."
+    if ! git archive "$local_sha" | tar -x -C "$tmp_dir"; then
+        echo "pre-push: failed to extract $local_sha, aborting push."
+        exit 1
+    fi
+
+    if ! (cd "$tmp_dir" && odin test .); then
+        echo "pre-push: tests failed on $local_sha, aborting push to $remote_ref."
+        exit 1
+    fi
+    # exit 1 above kills the whole script right away, not just this
+    # iteration — so if main is one of several refs in this push and its
+    # tests fail, the entire push is aborted, including other branches.
+done
+
+exit 0
