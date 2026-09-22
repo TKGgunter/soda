@@ -261,7 +261,7 @@ calc_rolling_columnslice_to_column :: proc(
 
     n_rows := len_column(column)
 
-    // TODO handle other types
+    // TODO handle other types by using switch
     rv := make([dynamic]f64, n_rows, allocator)
 
     // The first elements of an array, which are smaller than the window size,
