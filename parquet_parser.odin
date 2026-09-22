@@ -121,6 +121,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
             for i in 0..< n_rows {
                 buf[i]  = strings.clone(buf[i], allocator)
             }
+            data[column_name] = buf
         }
         case .BOOLEAN: {
             buf := make([dynamic]bool, n_rows, n_rows, allocator)
@@ -128,6 +129,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
                 fmt.eprintln("Parquet reader failed to read column ", column_name)
                 return dataframe, metadata, error
             }
+            data[column_name] = buf
         }
         case: {
             fmt.eprintln("Currently doesn't handle physical type: ", cq_physical_type)
