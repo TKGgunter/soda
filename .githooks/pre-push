@@ -1,8 +1,10 @@
 #!/bin/sh
 #
-# Blocks push to refs/heads/main if `odin test .` fails against the exact
-# commit being pushed — not your working tree, which may have uncommitted
-# or untracked changes.
+# Blocks push to refs/heads/main if fails a number of checks. These checks are
+# run against the commit being pushed not the current working tree.
+# The checks include:
+# - `odin test .`   : Runs unit tests.
+# - `rg -g '*.odin' NOPUSH`     : Checks for instances of `NOPUSH` with in the repository.
 #
 # Activate with:
 #   git config core.hooksPath .githooks
@@ -41,10 +43,18 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         exit 1
     fi
 
+    if (cd "$tmp_dir" && rg -q -g '*.odin' NOPUSH); then
+        echo "pre-push: NOPUSH check failed on $local_sha, aborting to $remote_ref."
+        echo "Run the following command for more info:"
+        echo "rg -g '*.odin' NOPUSH"
+        exit 1
+    fi
+
     if ! (cd "$tmp_dir" && odin test .); then
         echo "pre-push: tests failed on $local_sha, aborting push to $remote_ref."
         exit 1
     fi
+
     # exit 1 above kills the whole script right away, not just this
     # iteration — so if main is one of several refs in this push and its
     # tests fail, the entire push is aborted, including other branches.
