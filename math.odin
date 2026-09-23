@@ -72,32 +72,34 @@ range_columnslice :: proc(column: ColumnSlice) -> (min, max: Data, ok: bool) {
 
 sum :: proc {sum_column, sum_columnslice}
 
-sum_column :: proc(c: Column) -> (rt: f64, success: bool) {
+sum_column :: proc(c: Column) -> (rt: Data, success: bool) {
     l := len_column(c)
     cs := get_slice(c, 0, l) or_return
     return sum_columnslice(cs)
 }
 
-sum_columnslice :: proc(c: ColumnSlice) -> (f64, bool) {
+sum_columnslice :: proc(c: ColumnSlice) -> (Data, bool) {
     // Calculations will fail if run with an snan so I feel comfortable returning it
     // to a user.
-    rt := math.SNAN_F64
+    rt : Data
     success := false
 
     switch d in c {
     case []int: {
-        rt = 0
+        inner := 0
         for it in d {
-            rt += f64(it)
+            inner += it
         }
         success = true
+        rt = inner
     }
     case []f64: {
-        rt = 0
+        inner := 0.0
         for it in d {
-            rt += it
+            inner += it
         }
         success = true
+        rt = inner
     }
     case []string: {}
     case []bool: {}
@@ -119,7 +121,13 @@ mean_columnslice :: proc(c: ColumnSlice) -> (rt: Data, success: bool) {
         return rt, success
     }
 
-    return rt.(f64) / f64(len_column(c)), success
+    switch inner in rt {
+    case f64: return inner / f64(len_column(c)), success
+    case int: return f64(inner) / f64(len_column(c)), success
+    case string: return 0, false
+    case bool: return 0, false
+    }
+    return 0, false
 }
 
 
@@ -287,14 +295,6 @@ calc_rolling_columnslice_to_column :: proc(
 t_calc_rolling_default :: proc(t: ^testing.T) {
     input_c := []f64{1,2,3,4,5}
 
-    // TODO: Wrapping the provided sum function like this to pass it into our
-    // rolling calculation function is not so nice. I'd like to provide
-    // functionality with less friction.
-    sum := proc(c: ColumnSlice) -> (Data, bool) {
-        v, ok := sum_columnslice(c)
-        return v, ok
-    }
-
     output_c, ok := calc_rolling_columnslice_to_column(input_c, sum, 2)
     defer delete_column(output_c)
     expected := []f64{math.SNAN_F64, 3, 5, 7, 9}
@@ -347,13 +347,9 @@ t_calc_to_column :: proc(t: ^testing.T) {
         return f64(input[0].(int)) + input[1].(f64) - constants[0].(f64)
     }
     column, ok := calc_from_dataframe_to_column(df, f, {"a", "b"}, {1.0})
-    expected_column := []f64{2, 4, 6}
-
-    // TODO Unwrapping to delete in this way is not nice.
-    // we already have a delete_column function which is for dataframes
-    // it's unclear what the naming should be.
     defer delete_column(column)
 
+    expected_column := []f64{2, 4, 6}
     testing.expect_value(t, ok, true)
 
     for it, i in column.([dynamic]f64) {
