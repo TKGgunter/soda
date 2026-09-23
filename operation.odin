@@ -11,7 +11,7 @@ import ops "operations"
 // - [ ] we need tests!
 // - [ ] there are todos to complete
 
-Mask :: []bool
+Mask :: ops.Mask
 ColumnName :: string
 
 Operation :: struct {
