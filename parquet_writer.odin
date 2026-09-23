@@ -7,6 +7,12 @@ import "core:testing"
 
 import cq "carquet_bindings"
 
+Compression :: enum {
+	Fast,
+	ZStd,
+	Uncompressed,
+}
+
 // Builds an Error from a bare carquet status, for failures that carquet
 // reports through a return code rather than through a carquet_error.
 @(private="file")
@@ -25,7 +31,7 @@ _status_error :: proc(status: cq.carquet_status_t) -> Error {
 write_parquet :: proc(
     df: DataFrame,
     filename: string,
-    compression:= cq.carquet_compression.SNAPPY,  // TODO: we need to provide out own compression enum
+    compression:= Compression.Fast,
     metadata: map[string]string = nil,
 ) -> (error: Error) {
     if len_dataframe(df) == 0 {
@@ -68,7 +74,12 @@ write_parquet :: proc(
 
     options := cq.carquet_writer_options_t{}
     cq.carquet_writer_options_init(&options)
-    options.compression = compression
+    switch compression {
+    case .Fast : options.compression = .SNAPPY
+    case .ZStd : options.compression = .ZSTD
+    case .Uncompressed : options.compression = .UNCOMPRESSED
+    }
+
 
     cfilename := strings.clone_to_cstring(filename, context.temp_allocator)
     writer := cq.carquet_writer_create(cfilename, schema, &options, &err)
@@ -143,7 +154,7 @@ write_parquet :: proc(
 _expect_parquet_round_trip :: proc(
     t: ^testing.T,
     want: DataFrame,
-    compression:= cq.carquet_compression.SNAPPY,
+    compression:= Compression.Fast,
     want_metadata: map[string]string = nil,
     loc := #caller_location,
 ) {
@@ -219,7 +230,7 @@ t_write_parquet_compression_round_trip :: proc(t: ^testing.T) {
     )
     defer delete_dataframe(df)
 
-    for codec in ([]cq.carquet_compression{.UNCOMPRESSED, .SNAPPY, .ZSTD}) {
+    for codec in ([]Compression{.Uncompressed, .Fast, .ZStd}) {
         _expect_parquet_round_trip(t, df, codec)
     }
 }
