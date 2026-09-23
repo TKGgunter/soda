@@ -3,8 +3,6 @@ package operations
 import "base:runtime"
 import "core:fmt"
 
-// TODO: This is a redefinition from the dataframe package. Update so we don't
-// do this in the future.
 Mask :: []bool
 
 precedence :: proc(l: typeid, r: typeid) -> typeid {
