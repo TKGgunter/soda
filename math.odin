@@ -242,7 +242,7 @@ calc_rolling_dataframe_to_column :: proc(
     return calc_rolling_columnslice_to_column(column, f, window_size, allocator)
 }
 
-// TODO
+// FUTURE
 // - should we add constants to the rolling calculation. 
 // currently I believe it should be consistent with the other calc methods.
 // - should we include strides
@@ -269,24 +269,70 @@ calc_rolling_columnslice_to_column :: proc(
 
     n_rows := len_column(column)
 
-    // TODO handle other types by using switch
-    rv := make([dynamic]f64, n_rows, allocator)
-
-    // The first elements of an array, which are smaller than the window size,
-    // can not be calculated. These elements are set of SNAN.
-    for i in 0..<window_size - 1 {
-        rv[i] = math.SNAN_F64
-    }
-
-    for i:=0; i < n_rows - window_size + 1; i+=1 {
-        ws := window_size + i - 1  // This is the inclusive index. We have to
-                                   // correct this for get_slice which is an
-                                   // exclusive index.
-        sub_column := get_slice(column, i, ws + 1) or_return
+    // sample the function. Use it to determine the type.
+    {
+        ws := window_size - 1  // This is the inclusive index. We have to
+        sub_column := get_slice(column, 0, ws + 1) or_return
         d := f(sub_column) or_return
-        rv[ws] = d.(f64)
+        switch _d in d {
+        case int    : rt = make([dynamic]int, n_rows, allocator)
+        case f64    : {
+            _rt := make([dynamic]f64, n_rows, allocator)
+            // The first elements of an array, which are smaller than the window size,
+            // can not be calculated. These elements are set of SNAN.
+            for i in 0..<window_size - 1 {
+                _rt[i] = math.SNAN_F64
+            }
+            rt = _rt
+        }
+        case string : rt = make([dynamic]string, n_rows, allocator)
+        case bool   : rt = make([dynamic]bool, n_rows, allocator)
+        }
     }
-    rt = rv
+
+
+    switch inner_column in rt {
+    case [dynamic]int: {
+        for i:=0; i < n_rows - window_size + 1; i+=1 {
+            ws := window_size + i - 1  // This is the inclusive index. We have to
+                                       // correct this for get_slice which is an
+                                       // exclusive index.
+            sub_column := get_slice(column, i, ws + 1) or_return
+            d := f(sub_column) or_return
+            inner_column[ws] = d.(int)
+        }
+    }
+    case [dynamic]f64: {
+        for i:=0; i < n_rows - window_size + 1; i+=1 {
+            ws := window_size + i - 1  // This is the inclusive index. We have to
+                                       // correct this for get_slice which is an
+                                       // exclusive index.
+            sub_column := get_slice(column, i, ws + 1) or_return
+            d := f(sub_column) or_return
+            inner_column[ws] = d.(f64)
+        }
+    }
+    case [dynamic]string: {
+        for i:=0; i < n_rows - window_size + 1; i+=1 {
+            ws := window_size + i - 1  // This is the inclusive index. We have to
+                                       // correct this for get_slice which is an
+                                       // exclusive index.
+            sub_column := get_slice(column, i, ws + 1) or_return
+            d := f(sub_column) or_return
+            inner_column[ws] = d.(string)
+        }
+    }
+    case [dynamic]bool: {
+        for i:=0; i < n_rows - window_size + 1; i+=1 {
+            ws := window_size + i - 1  // This is the inclusive index. We have to
+                                       // correct this for get_slice which is an
+                                       // exclusive index.
+            sub_column := get_slice(column, i, ws + 1) or_return
+            d := f(sub_column) or_return
+            inner_column[ws] = d.(bool)
+        }
+    }
+    }
     ok = true
     return 
 }
