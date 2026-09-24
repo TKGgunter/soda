@@ -12,6 +12,9 @@ Reader :: struct {
     _reader: ^cq.carquet_reader,
 }
 
+// TODO: return better errors not just wrappers around the lib we are current
+// using. The lib can change and when it does users should not be dependent on
+// carquet, but soda.
 Error :: Maybe(cq.carquet_error)
 
 @(init)

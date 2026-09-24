@@ -173,9 +173,10 @@ where T == Column || T == ColumnSlice  #optional_ok {
     return
 }
 
-get_columnames :: proc(dataframe: $T) -> (rt: []ColumnName, err: runtime.Allocator_Error)
+// TODO: rename to get_column_names AND pass in an allocator
+get_column_names :: proc(dataframe: $T, allocator:= context.allocator) -> (rt: []ColumnName, err: runtime.Allocator_Error)
 where T == DataFrame || T == DataFrameSlice {
-    rt, err = slice.map_keys(dataframe.data)
+    rt, err = slice.map_keys(dataframe.data, allocator)
     return rt, err
 }
 

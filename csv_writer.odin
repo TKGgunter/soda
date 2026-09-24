@@ -12,7 +12,7 @@ write_csv :: proc(df: DataFrame, filename: string, include_type_header:= true) -
     // As of Sept 19, 2026 dataframes are backed by unordered dictionaries. To
     // ensure CSVs are constructed with a consistent column order column names
     // are pulled to an array.
-    column_names, _ := get_columnames(df)
+    column_names, _ := get_column_names(df)
     defer delete(column_names)
 
     // Write header

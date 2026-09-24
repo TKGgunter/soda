@@ -41,7 +41,7 @@ write_parquet :: proc(
 
     // Column names are pulled to an array to give the file a fixed column
     // order. The schema and the column data are both written in this order.
-    column_names, _ := get_columnames(df)
+    column_names, _ := get_column_names(df)
     defer delete(column_names)
 
     err := cq.carquet_error{}
