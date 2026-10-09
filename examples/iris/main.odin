@@ -2,11 +2,11 @@ package iris_example
 
 /*
    The iris dataset is a classic dataset often used to introduce students to
-   data science and the tools of data science. What then is a better dataset
-   can be used as an introduction to SODA. 
+   data science and the tools of data science. What then, is a better dataset
+   to introduce SODA. 
 
    The analysis executed in this program follows an introductory assignment
-   constructed by Bill Mongan.
+   written by Bill Mongan.
 
    The assignment can be found here: https://www.billmongan.com/Ursinus-CS173/Assignments/Iris
 */
@@ -19,6 +19,7 @@ import "core:os"
 Data :: soda.Data
 get_column :: soda.get_columnslice
 head :: soda.head
+println :: fmt.println
 
 main :: proc() {
 
@@ -29,11 +30,17 @@ main :: proc() {
     // Lets print the first 5 rows of data.
     head(df)
 
-    // Get a list of the unique flower names
+    // The iris data set contains measurements for a number of flower species.
+    // Lets print the unique set of species contained in the dataset.
     species, _ := get_column(df, "species")
     unique_species := soda.unique(species)
-    fmt.println(unique_species)
+    println(unique_species)
 
+    // TODO: Plot any two numeric columns.
+
+
+    // TODO
+    // Euclidean distance is a technique 
     calc_euclidean_distance :: proc(vars: []Data, constants: []Data) -> f64 {
         pl := vars[0].(f64)
         pl_mean := constants[0].(f64)
@@ -53,12 +60,13 @@ main :: proc() {
 
     // Report species specific statistics
     report := make(map[string][dynamic]Data)
-    report["sepal_width"] = make([dynamic]Data)
+    report["sepal_width"]  = make([dynamic]Data)
     report["sepal_length"] = make([dynamic]Data)
-    report["petal_width"] = make([dynamic]Data)
+    report["petal_width"]  = make([dynamic]Data)
     report["petal_length"] = make([dynamic]Data)
-    report["distance"] = make([dynamic]Data)
-    report["species"] = make([dynamic]Data)
+    report["distance"]     = make([dynamic]Data)
+    report["species"]      = make([dynamic]Data)
+
     for species in unique_species.([]string) {
 
         species_df, _ := soda.filter(&df, {"species", .Eq, Data(species)}, context.temp_allocator)
@@ -108,11 +116,20 @@ main :: proc() {
 
     soda.append_column(&df, "distance", distance)
 
+    {
+        c, _ := get_column(df, "petal_length")
+        m, _ := soda.min_in(c)
+        println("minimum", m)
+    }
+
     plot := soda.init_plot(&df)
     defer soda.delete_plot(plot)
     soda.add_mapping(&plot, soda.Aesthetic{x = "petal_length", y = "petal_width"})
     soda.add_scatter(&plot, size = 1.5)
     plot.labels.title = "Iris"
+    g, _ := soda.draw(&plot, .Png)
+    soda.save("test.png", &g)
+    println(g)
 
     /* Plotting with SODA is still in the works
     scatter := Plot(^DataFrame) {
