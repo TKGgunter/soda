@@ -1,11 +1,12 @@
 package soda
 
-import "core:bytes"
 import "core:fmt"
 import "core:os"
-import "core:image"
-import "core:image/bmp"
+import "core:math"
 import "base:runtime"
+
+import "graphic"
+import rl "vendor:raylib"
 
 // TODO
 // Add the selection component 
@@ -19,6 +20,9 @@ Plot :: struct($T: typeid) where T == ^DataFrame || T == ^DataFrameSlice {
     coord:     Coord,
     theme:     Theme,
     labels:    Labels,
+
+    backend: graphic.Backend,
+    panel: graphic.Panel  // TODO: I'm not sure this needs to be here.
 }
 
 Aesthetic :: struct {
@@ -67,13 +71,14 @@ Palette :: union {
     GradientPalette
 }
 
-Color    :: [4]u8
+Color    :: rl.Color
 
 GradientPalette :: struct { 
     low,
     high: Color
 }
 
+// Change to a struct see: https://r-graph-gallery.com/223-faceting-with-ggplot2.html
 Facet :: enum {
     None,
     Wrap,
@@ -99,6 +104,7 @@ Coord :: struct {
 
 CoordKind :: enum {
     Cartesian = 0,
+    // What is flip and fixed?
     Flip,
     Fixed
 }
@@ -106,9 +112,13 @@ CoordKind :: enum {
 
 Theme :: struct {
     panel_background,
+    plot_background,
     grid_color,
     text_color: Color,
-    font_size:  f32,
+    panel_title_font_size,
+    plot_title_font_size,
+    axis_label_font_size,
+    axis_tick_font_size:  f32,
     legend_position:  LegendPosition,
 }
 
@@ -140,31 +150,31 @@ Shape :: struct {
     channels: int 
 }
 
-Dpi :: int
+DefaultTheme :: Theme {
+    panel_background = rl.BEIGE,
+    plot_background  = rl.WHITE,
+    grid_color       = rl.GRAY,
+    text_color       = rl.BLACK,
+    // TODO: transition to Font struct
+    panel_title_font_size = 36,
+    plot_title_font_size  = 24,
+    axis_label_font_size  = 18,
+    axis_tick_font_size   = 18,
 
-Theme_Default_Background :: Color{255,255,255,255}
-Theme_Default_Grid       :: Color{0,0,0,255}
-Theme_Default_Text       :: Color{0,0,0,255}
-
-Theme_Default :: Theme {
-    panel_background = Theme_Default_Background,
-    grid_color = Theme_Default_Grid,
-    text_color = Theme_Default_Text,
-    font_size = 20
+    // TODO: temp
+    legend_position = .None,
 }
 
+N_TICKS :: 5
 
 // TODO - I suspect this palette is doing nothing
 // A small default categorical palette (ColorBrewer Set1-ish), used when no
 // Scale{aesthetic = .Color} with a manual palette is attached to the plot.
-Default_Palette := []Color {
-    {0,   0,    0,  255},
-    {228, 26,  28,  255},
-    {55,  126, 184, 255},
-    {77,  175, 74,  255},
-    {152, 78,  163, 255},
-    {255, 127, 0,   255},
-    {255, 255, 51,  255},
+DefaultPalette := []Color {
+    rl.BLUE,
+    rl.RED,
+    rl.GREEN,
+    rl.PINK
 }
 
 // Hershey symbols
@@ -181,12 +191,12 @@ PointSymbolCode :: enum(int) {
 }
 
 Graphic :: struct {
-    using  image: image.Image,
+    using  image: rl.Image,
     is_svg: bool  // This is a stand in flag for more output types that are not handled by odin's image lib.
 }
 
 delete_graphic :: proc(g: Graphic, loc:= #caller_location) {
-    delete(g.pixels.buf, loc)
+    rl.UnloadImage(g.image)
 }
 
 to_f64_slice :: proc(cs: ColumnSlice, allocator := context.temp_allocator) -> (out: []f64, ok: bool) {
@@ -205,6 +215,18 @@ to_f64_slice :: proc(cs: ColumnSlice, allocator := context.temp_allocator) -> (o
     return nil, false
 }
 
+// Evenly spaced tick labels from lo to hi inclusive, matching Ticks with
+// first_tick_position = 0 and step_size = 1/(n-1).
+@(private="file")
+_axis_tick_labels :: proc(lo, hi: f64, n: int, allocator := context.temp_allocator) -> []string {
+    labels := make([]string, n, allocator)
+    for i in 0..<n {
+        v := lo + (hi - lo) * f64(i) / f64(n - 1)
+        labels[i] = fmt.aprintf("%.3g", v, allocator = allocator)
+    }
+    return labels
+}
+
 
 // ============================== Pixel transform ==========================
 // Backend-agnostic: maps a resolved world-space window onto a raster of
@@ -217,12 +239,23 @@ PixelTransform :: struct {
 }
 
 // TODO add allocator
-init_plot :: proc(df: $T) -> Plot(T) 
+init_plot :: proc(df: $T, interactive:bool=false) -> Plot(T) 
 where T == ^DataFrame || T == ^DataFrameSlice {
-    return Plot(T) {
+    plot := Plot(T) {
         dataframe = df,
         layers = make([dynamic]Layer, 0, 1),
     }
+
+    fonts := []graphic.InnerFont{
+        graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+        graphic.DEFAULT_FONT_PANEL_TITLE,
+        graphic.DEFAULT_FONT_GRAPHIC_TITLE
+    }
+    backend, is_ok := graphic.start_backend(interactive, fonts)
+    plot.backend = backend
+
+    assert(is_ok)
+    return plot
 }
 
 add_mapping :: proc(plot: ^Plot($T), mapping: Aesthetic) {
@@ -245,21 +278,43 @@ draw_interactive :: proc(
 ) {
 }
 
+@(private="file")
+_build_plot_theme_defaults :: proc(p: ^Plot($T)) {
+    if p.theme.panel_title_font_size <= 0 {
+        p.theme.panel_title_font_size = DefaultTheme.panel_title_font_size
+    }
+    if p.theme.plot_title_font_size <= 0 {
+        p.theme.plot_title_font_size = DefaultTheme.plot_title_font_size
+    }
+    if p.theme.panel_background == {} {
+        p.theme.panel_background = DefaultTheme.panel_background
+    }
+    if p.theme.plot_background == {} {
+        p.theme.plot_background = DefaultTheme.plot_background
+    }
+    if p.theme.text_color == {} { p.theme.text_color = DefaultTheme.text_color }
+    if p.theme.grid_color == {} { p.theme.grid_color = DefaultTheme.grid_color }
+}
+
 draw :: proc(
     p: ^Plot($T),
     format: OutputFormat,
-    backend: Backend,
     shape := Shape{800, 600, 3},
     allocator := context.allocator
-) -> (rt: Graphic, ok: bool) {
+) -> (rt: Graphic, ok: bool) {  // TODO: return a descriptive error.
 
-    if p.theme.font_size <= 0 { p.theme.font_size = Theme_Default.font_size }
-    if p.theme.panel_background == {} { p.theme.panel_background = Theme_Default.panel_background }
-    if p.theme.text_color == {} { p.theme.text_color = Theme_Default.text_color }
-    if p.theme.grid_color == {} { p.theme.grid_color = Theme_Default.grid_color }
-
+    _build_plot_theme_defaults(p)
     
-    // TODO we only work with x and y at this time. Once we begin using other
+    // Layers need to be mapped to data. If mappings are not defined in either
+    // mapping or layer the plot cannot be made. This checks at one if not both
+    // are present.
+    if p.mapping.x == "" || p.mapping.y == "" {
+        for &layer in p.layers {
+            if layer.mapping == nil do return
+        }
+    }
+
+    // TODO: we only work with x and y at this time. Once we begin using other
     // mappings we will need to check those as well.
     _, x_ok := get_columnslice(p.dataframe^, p.mapping.x)
     _, y_ok := get_columnslice(p.dataframe^, p.mapping.y)
@@ -277,114 +332,229 @@ draw :: proc(
         }
     }
 
-    {
-        // TODO what if the mapping isn't set? we then need to remove
-        column := get_columnslice(p.dataframe^, p.mapping.x) or_return
-        if p.coord.x_min == nil {
-            m, _ := min_in(column)
-            switch _m in m {
-            case int: p.coord.x_min = f64(_m)
-            case f64: p.coord.x_min = _m
-            case string, bool: 
-                // TODO
-                fmt.eprintln("Unexpected")
-                return
+    {  // TODO: This function is long and difficult to wield. It can and
+       // probably should be broken in to smaller pieces.
+         if p.coord.x_min == nil || p.coord.x_max == nil {
+            x_min := math.F32_MAX
+            x_max := math.F32_MIN
+
+            column := get_columnslice(p.dataframe^, p.mapping.x) or_return
+            min_value, max_value, _ := range(column)
+
+            switch _m in min_value {
+            case int: {
+                x_min = min(f64(_m), x_min)
+                x_max = max(f64(max_value.(int)), x_max)
             }
-        }
-        if p.coord.x_max == nil {
-            m, _ := max_in(column)
-            switch _m in m {
-            case int: p.coord.x_max = f64(_m)
-            case f64: p.coord.x_max = _m
-            case string, bool: 
-                // TODO
-                fmt.eprintln("Unexpected")
-                return
+            case f64: {
+                x_min = min(_m, x_min)
+                x_max = max(max_value.(f64), x_max)
             }
+            case string, bool: {
+                // TODO: remove warning when comfortable.
+                fmt.eprintln("X min/max is 0/1 for strings and bool")
+                x_min = 0
+                x_max = 1
+            }
+            }
+
+            for layer in p.layers {
+                aes := layer.mapping.(Aesthetic)
+                column := get_columnslice(p.dataframe^, aes.x) or_return
+                min_value, max_value, _ := range(column)
+
+                switch _m in min_value {
+                case int: {
+                    x_min = min(f64(_m), x_min)
+                    x_max = max(f64(max_value.(int)), x_max)
+                }
+                case f64: {
+                    x_min = min(_m, x_min)
+                    x_max = max(max_value.(f64), x_max)
+                }
+                case string, bool: {
+                    // TODO: remove warning when comfortable.
+                    fmt.eprintln("X min/max is 0/1 for strings and bool")
+                    x_min = 0
+                    x_max = 1
+                }
+                }
+            }
+            if p.coord.x_min == nil do p.coord.x_min = x_min - 0.2*math.sqrt(x_max - x_min)
+            if p.coord.x_max == nil do p.coord.x_max = x_max + 0.2*math.sqrt(x_max - x_min)
         }
     }
     {
-        column := get_columnslice(p.dataframe^, p.mapping.y) or_return
-        if p.coord.y_min == nil {
-            m, _ := min_in(column)
-            switch _m in m {
-            case int: p.coord.y_min = f64(_m)
-            case f64: p.coord.y_min = _m
-            case string, bool: 
-                // TODO
-                fmt.eprintln("Unexpected")
-                return
+        if p.coord.y_min == nil || p.coord.y_max == nil {
+            y_min := math.F32_MAX
+            y_max := math.F32_MIN
+
+            column := get_columnslice(p.dataframe^, p.mapping.y) or_return
+            min_value, max_value, _ := range(column)
+
+            switch _m in min_value {
+            case int: {
+                y_min = min(f64(_m), y_min)
+                y_max = max(f64(max_value.(int)), y_max)
             }
-        }
-        if p.coord.y_max == nil {
-            m, _ := max_in(column)
-            switch _m in m {
-            case int: p.coord.y_max = f64(_m)
-            case f64: p.coord.y_max = _m
-            case string, bool: 
-                // TODO
-                fmt.eprintln("Unexpected")
-                return
+            case f64: {
+                y_min = min(_m, y_min)
+                y_max = max(max_value.(f64), y_max)
             }
+            case string, bool: {
+                // TODO: remove warning when comfortable.
+                fmt.eprintln("X min/max is 0/1 for strings and bool")
+                y_min = 0
+                y_max = 1
+            }
+            }
+
+            for layer in p.layers {
+                aes := layer.mapping.(Aesthetic)
+                column := get_columnslice(p.dataframe^, aes.y) or_return
+                min_value, max_value, _ := range(column)
+
+                switch _m in min_value {
+                case int: {
+                    y_min = min(f64(_m), y_min)
+                    y_max = max(f64(max_value.(int)), y_max)
+                }
+                case f64: {
+                    y_min = min(_m, y_min)
+                    y_max = max(max_value.(f64), y_max)
+                }
+                case string, bool: {
+                    // TODO: remove warning when comfortable.
+                    fmt.eprintln("X min/max is 0/1 for strings and bool")
+                    y_min = 0
+                    y_max = 1
+                }
+                }
+            }
+            if p.coord.y_min == nil do p.coord.y_min = y_min - 0.2*math.sqrt(y_max - y_min)
+            if p.coord.y_max == nil do p.coord.y_max = y_max + 0.2*math.sqrt(y_max - y_min)
         }
     }
 
-    // Set up the output target, one panel per facet cell.
-    raw_buf: []byte
-    temp_path: string
-    if format == .Png {
-        raw_buf = make([]byte, shape.width * shape.height * shape.channels, allocator)
-    } else {
+    assert(p.facet == .None, "Error: facet was not .None. Other variants have not been implemented.")
 
-        // TODO the following should be done by the backend code we call.
-        // Gathering a temp dir string fails if there is an allocation error.
-        temp_dir, temp_dir_err := os.temp_dir(context.temp_allocator)
-        if temp_dir_err != nil do temp_dir = "/tmp"
-
-        ext := "svg" if format == .Svg else "pdf"
-        temp_path = fmt.tprintf("%s/odin_plot_output.%s", temp_dir, ext)
-    }
-
-    // TODO this dpi value is a random display dpi found on the internet.
-    dpi := 96
-    state := backend.init(format, shape, dpi, p.facet, p.theme.panel_background, temp_path, raw_buf)
-
-    // TODO implement logic here.
-    assert(p.facet == .None)
     {
+        {  // Fill out panel
+            p.panel.title = p.labels.title
+            p.panel.title_alignment = .Left
+            // TODO: change how we hard code things
+            p.panel.title_position  = {
+                10, 
+                10
+            }
+            p.panel.font = graphic.Font {
+                color = rl.BLACK,
+                inner_font = graphic.DEFAULT_FONT_PANEL_TITLE
+            }
+            p.panel.color = p.theme.panel_background
+        }
+        graphic.begin_panel(p.panel, p.backend)
 
-        // TODO scales produce a subset of data, and should not be used for
-        // transformations
-        transform :=  PixelTransform{
-            x_min  = p.coord.x_min.(f64),
-            x_max  = p.coord.x_max.(f64),
-            y_min  = p.coord.y_min.(f64),
-            y_max  = p.coord.y_max.(f64),
-            width  = shape.width,
-            height = shape.height,
+        graphic_element : graphic.Graphic
+        {
+            tick_font  := graphic.Font{
+                inner_font = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+                color = p.theme.text_color
+            }
+            title_font := graphic.Font{
+                inner_font = graphic.DEFAULT_FONT_GRAPHIC_TITLE,
+                color = p.theme.text_color
+            }
+
+            tick_step := f32(1) / f32(N_TICKS - 1)
+            // TODO: we need a algo to determine the first tick position value.
+            // IDEA: take the range to determine the order of magnitude. Use
+            // that to determine the closest and least value to the minimum.
+            // this will help determine the first_tick_position.
+            // first_tick_position := 0
+
+            graphic_element.x_axis = graphic.Axis {
+                major_tick_config = graphic.Ticks {
+                    first_tick_position = 0,
+                    step_size           = tick_step,
+                    text_rotation       = 0,
+                    color               = tick_font.color,
+                    length              = 8,
+                    font                = tick_font,
+                },
+                major_tick_labels     = _axis_tick_labels(p.coord.x_min.(f64), p.coord.x_max.(f64), N_TICKS),
+                major_tick_label_font = tick_font,
+                minor_tick_config     = nil,
+                title                 = p.labels.x.(string),
+                title_font            = title_font,
+                title_alignment       = .Center,
+                title_rotation        = 0,
+                color                 = tick_font.color,
+            }
+            graphic_element.y_axis = graphic.Axis {
+                major_tick_config = graphic.Ticks {
+                    first_tick_position = 0,
+                    step_size           = tick_step,
+                    text_rotation       = 0,
+                    color               = tick_font.color,
+                    length              = 8,
+                    font                = tick_font,
+                },
+                major_tick_labels     = _axis_tick_labels(p.coord.y_min.(f64), p.coord.y_max.(f64), N_TICKS),
+                major_tick_label_font = tick_font,
+                minor_tick_config     = nil,
+                title                 = p.labels.y.(string),
+                title_font            = title_font,
+                title_alignment       = .Center,
+                title_rotation        = -math.PI / 2,
+                color                 = tick_font.color,
+            }
+            graphic_element.x_axis_grid = true
+            graphic_element.y_axis_grid = true
+
+            // TODO: will need to update when adding the ability to render many
+            // plots on the same panel.
+            graphic_element.title = ""
+            graphic_element.font  = graphic.Font {
+                graphic.DEFAULT_FONT_PANEL_TITLE,
+                rl.BLACK
+            }
+            graphic_element.title_alignment = .Left
+            graphic_element.background_color = rl.WHITE
+            graphic_element.plot_color = {75, 75, 75, 255}
         }
 
-        backend.panel_begin(state, 0, transform.x_min, transform.x_max, transform.y_min, transform.y_max)
+        dst_rect := graphic.Rectangle {
+            p.panel.title_position.x,
+            40,
+            f32(p.backend.render_texture.texture.width) - 2*p.panel.title_position.x,
+            f32(p.backend.render_texture.texture.height) - 60
+        }
+        graphic.begin_graphic(graphic_element, dst_rect)
 
-        theme   := p.theme
-        labels  := p.labels
-
-        backend.set_color(state, theme.panel_background)
-        backend.fill_rect(state, transform.x_min, transform.x_max, transform.y_min, transform.y_max)
-
-        backend.set_font_size(state, theme.font_size)
-        backend.set_color(state, theme.grid_color)
-        backend.draw_frame(state, false)
-
-        backend.set_color(state, theme.text_color)
-        backend.draw_label(state, labels.x.(string), labels.y.(string), labels.title)
-
-        for layer, i in p.layers{
-            // TODO: we are assuming x and y are good
+        for layer, i in p.layers {
             x, _ := get_columnslice(p.dataframe^, layer.mapping.?.x)
             y, _ := get_columnslice(p.dataframe^, layer.mapping.?.y)
             xs, xs_ok := to_f64_slice(x)
             ys, ys_ok := to_f64_slice(y)
+
+            min_x := f32(p.coord.x_min.(f64))
+            max_x := f32(p.coord.x_max.(f64))
+            min_y := f32(p.coord.y_min.(f64))
+            max_y := f32(p.coord.y_max.(f64))
+
+            x_values := make([]f32, len(xs), context.temp_allocator)
+            range_x := (max_x - min_x)
+            for it, i in xs {
+                x_values[i] = f32(it) - min_x
+                x_values[i] /= range_x
+            }
+            y_values := make([]f32, len(ys), context.temp_allocator)
+            range_y := (max_y - min_y)
+            for it, i in ys {
+                y_values[i] = f32(it) - min_y
+                y_values[i] /= range_y
+            }
 
             if xs_ok == false || ys_ok == false {
                 // TODO
@@ -392,51 +562,31 @@ draw :: proc(
                 return
             }
 
-            // TODO users need to able to set the colors
-            color := Default_Palette[i]
-
             switch g in layer.geom {
+            // TODO: we don't use any the aspects of the Point struct
             case Point:
-                backend.set_color(state, color)
-                // TODO: update interface to accept an enum instead of a int.
-                backend.draw_scatter(state, xs, ys, int(g.symbol_code), g.size)
+                // TODO: store some where
+                scatter_index := graphic.make_scatter_point_buffer(x_values, y_values, &p.backend)
+                graphic.draw_data_scatter(
+                    .Circle,
+                    p.backend.vertex_map[scatter_index],
+                    DefaultPalette[i],
+                    p.backend,
+                )
             case Line:
-                backend.set_color(state, color)
-                backend.draw_line(state, xs, ys, g.linewidth)
+                panic("Error: Line has not been implemented.")
             }
         }
+
+        graphic.end_graphic(graphic_element)
     }
+    // TODO: draw legend
 
-    // TODO draw legend
+    graphic.end_panel(p.backend)
 
-    _ = backend.finish(state) or_return
-
-    switch format {
-    case .Svg: 
-        rt.width = shape.width
-        rt.height = shape.height
-
-        s := transmute(runtime.Raw_Slice)raw_buf
-        d := runtime.Raw_Dynamic_Array{
-            data = s.data,
-            len = s.len,
-            allocator = runtime.nil_allocator(),
-        }
-        rt.pixels = bytes.Buffer{
-            buf = transmute([dynamic]u8)d,
-        }
-
-        rt.is_svg = true
-        ok = true
-
-    case .Png:
-        // TODO: I am assuming there are 3 channels
-        rgb_buf := ([^][3]u8)(raw_data(raw_buf))
-        image := image.pixels_to_image(rgb_buf[:len(raw_buf)/3], shape.width, shape.height) or_return
-
-        rt.image = image
-        rt.is_svg = false
-        ok = true
+    #partial switch format {
+    case .Png: 
+        rt.image = graphic.store_frame(p.backend)
     }
     return 
 }
@@ -444,72 +594,13 @@ draw :: proc(
 // TODO think of a better name.
 SaveError :: union {
     os.Error,
-    bmp.Error
 }
 
 save :: proc(path: string, g: ^Graphic) -> SaveError {
     if g.is_svg {
-        return os.write_entire_file(path, bytes.buffer_to_bytes(&g.pixels))
+        panic("svg not implemented.")
     } else {
-        return bmp.save_to_file(path, &g.image)
+        graphic.save_frame(g.image, path)
     }
     return nil
 }
-
-
-// ============================== Backend ===================================
-// The rendering contract the customer provided plotting library must implement to
-// plug into this package's plotting interface. 
-//
-// Every proc takes an explicit `state: rawptr`. `init` must returns it, every
-// later call receives it back, `finish` consumes it. A backend that keeps
-// its own global state can ignore the param and
-// return nil from `init`.
-
-Backend :: struct {
-    // Initializes any state a plotting library might require.
-    // The initial implementation for this API is based off of what PLPlot requires.
-    // Returns the state to pass to every other proc.
-    init: proc(format: OutputFormat, shape: Shape, dpi: Dpi, facet: Facet, 
-               background: Color, temp_path: string, png_buf: []byte) -> rawptr,
-
-    // Advances to panel `index` of the facet grid and binds a world
-    // coordinate window (x_min/x_max/y_min/y_max) to that panel's
-    // viewport. Every subsequent draw_* call is interpreted in this
-    // coordinate system until the next panel_begin.
-    panel_begin: proc(state: rawptr, index: int, x_min, x_max, y_min, y_max: f64),
-
-    // Sets character/label height for subsequent draw_frame/draw_label
-    // calls. Units: points.
-    set_font_size: proc(state: rawptr, size: f32),
-
-    // Sets the color used by the next draw_* call. One "current color"
-    // register, not separate fill/stroke state.
-    set_color: proc(state: rawptr, c: Color),
-
-    // Fills an axis-aligned rect in world coordinates with the current
-    // color. Used for the panel background.
-    fill_rect: proc(state: rawptr, x_min, x_max, y_min, y_max: f64),
-
-    // Draws the panel frame and tick marks/numbers in the current color.
-    // `show_grid` is explicit rather than baked into a magic opts string.
-    draw_frame: proc(state: rawptr, show_grid: bool),
-
-    // Draws axis captions and the panel title in the current color.
-    draw_label: proc(state: rawptr, xlabel, ylabel, title: string),
-
-    // ---- geom draws, one per Geom variant plot.odin currently supports ----
-
-    draw_scatter: proc(state: rawptr, xs, ys: []f64, symbol: int, size: f32),
-    draw_line: proc(state: rawptr, xs, ys: []f64, width: f32),
-
-    // Flushes/serializes the output and returns the encoded bytes (raw
-    // RGB for Png via png_buf, file contents for Svg/Pdf). Must be
-    // called exactly once, after all panels are drawn. Consumes `state`.
-    finish: proc(state: rawptr) -> ([]byte, bool),
-}
-
-/*
-export LD_LIBRARY_PATH="$PWD/../plplot_bindings/PLplot/install/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export PLPLOT_LIB="$PWD/../plplot_bindings/PLplot/install/share/plplot5.15.0"
-*/
