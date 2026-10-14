@@ -565,22 +565,36 @@ unique_columnslice :: proc(column: ColumnSlice, allocator:= context.allocator) -
     case []int : {
         unique_column := make([]int, len(c), allocator)
         copy(unique_column, c[:])
+        slice.sort(unique_column)
         rt = slice.unique(unique_column)
     }
     case []f64 : {
         unique_column := make([]f64, len(c), allocator)
         copy(unique_column, c[:])
+        slice.sort(unique_column)
         rt = slice.unique(unique_column)
     }
     case []string : {
         unique_column := make([]string, len(c), allocator)
         copy(unique_column, c[:])
+        slice.sort(unique_column)
         rt = slice.unique(unique_column)
     }
     case []bool : {
-        unique_column := make([]bool, len(c), allocator)
-        copy(unique_column, c[:])
-        rt = slice.unique(unique_column)
+        unique_column := make([]bool, 2, allocator)
+        found_true_instant  := false
+        found_false_instant := false
+        for it in c {
+            if it == true {
+                unique_column[0] = true
+                found_true_instant = true
+            } else {
+                unique_column[1] = false
+                found_false_instant = true
+            }
+            if found_true_instant && found_false_instant do break
+        }
+        rt = unique_column
     }
     }
     return rt
