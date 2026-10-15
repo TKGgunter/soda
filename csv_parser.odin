@@ -39,8 +39,10 @@ Type_Mismatch_Error :: struct {
     expected: Column_Type,
 }
 
+read_csv :: proc {read_csv_file, read_csv_path}
+
 // Reads CSV data from a file into a DataFrame.
-read_csv :: proc(file: ^os.File, allocator := context.allocator) -> (df: DataFrame, err: Parse_Error) {
+read_csv_file :: proc(file: ^os.File, allocator := context.allocator) -> (df: DataFrame, err: Parse_Error) {
     buf, file_err := os.read_entire_file(file, allocator)
     defer delete(buf)
 
@@ -49,6 +51,13 @@ read_csv :: proc(file: ^os.File, allocator := context.allocator) -> (df: DataFra
     }
 
     return parse_csv(string(buf), allocator)
+}
+
+// Reads CSV data from a file into a DataFrame.
+read_csv_path :: proc(path: string, allocator := context.allocator) -> (df: DataFrame, err: Parse_Error) {
+    file := os.open(path) or_return
+    return read_csv_file(file, allocator)
+
 }
 
 // reads CSV data into a DataFrame. Column types come from an optional
@@ -253,6 +262,7 @@ _convert_cell :: proc(s: string, col_type: Column_Type, allocator := context.all
 // into memory. Column types come from an optional type-hint row (row 1); if
 // none is present, they're detected from a small sample (up to 2 data rows)
 // peeked ahead during iterator_init.
+@(private)
 Table_Iterator :: struct {
     reader:       csv.Reader,
     headers:      []string,
@@ -270,6 +280,7 @@ Table_Iterator :: struct {
 // optional type-hint row, then leaves the reader positioned at the first data
 // row. The iterator clones data internally so the caller's string may be freed
 // immediately after this call.
+@(private)
 iterator_init :: proc(it: ^Table_Iterator, data: string, allocator := context.allocator) -> (err: Parse_Error) {
     context.allocator = allocator
     it._allocator = allocator
@@ -382,6 +393,7 @@ iterator_init :: proc(it: ^Table_Iterator, data: string, allocator := context.al
 //
 // Returns more=false at EOF or on error. Check iterator_last_error after the
 // loop to distinguish EOF from a real error.
+@(private)
 iterator_next :: proc(it: ^Table_Iterator) -> (row: []Cell, err: Parse_Error, more: bool) {
     if it._pending_pos < len(it._pending) {
         row = it._pending[it._pending_pos]
@@ -430,12 +442,14 @@ iterator_next :: proc(it: ^Table_Iterator) -> (row: []Cell, err: Parse_Error, mo
 }
 
 // iterator_last_error returns any non-EOF error that stopped the iterator.
+@(private)
 iterator_last_error :: proc(it: Table_Iterator) -> Parse_Error {
     return it._last_err
 }
 
 // iterator_destroy frees all memory owned by the iterator. It does NOT free
 // rows returned by iterator_next — use row_destroy for those.
+@(private)
 iterator_destroy :: proc(it: ^Table_Iterator) {
     context.allocator = it._allocator
 
@@ -459,6 +473,7 @@ iterator_destroy :: proc(it: ^Table_Iterator) {
 }
 
 // row_destroy frees a row returned by iterator_next.
+@(private)
 row_destroy :: proc(row: []Cell, allocator := context.allocator) {
     for cell in row {
         if s, ok := cell.(string); ok {
