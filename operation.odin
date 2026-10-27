@@ -112,7 +112,9 @@ where T == DataFrame || T == DataFrameSlice
 
 apply_mask :: proc{apply_mask_to_dataframe, apply_mask_to_dataframeslice}
 
-apply_mask_to_dataframeslice :: proc(df: ^DataFrameSlice, mask: Mask, allocator:= context.allocator) -> (rt: DataFrameSlice, success: bool) {
+apply_mask_to_dataframeslice :: proc(df: ^DataFrameSlice, mask: Mask, allocator:= context.allocator) -> (rt: DataFrame, success: bool) {
+    assert(len(mask) == df.n_rows)
+
     n_rows := 0 
     for it in mask {
         if it == true {
@@ -120,12 +122,12 @@ apply_mask_to_dataframeslice :: proc(df: ^DataFrameSlice, mask: Mask, allocator:
         }
     }
 
-    data := make(map[string]ColumnSlice, allocator)
+    data := make(map[string]Column, allocator)
 
     for key, column in df.data {
         switch v in column {
         case []int: {
-            buf := make([]int, n_rows)
+            buf := make([dynamic]int, n_rows)
             j := 0
             for it, i in v {
                 if mask[i] {
@@ -136,33 +138,33 @@ apply_mask_to_dataframeslice :: proc(df: ^DataFrameSlice, mask: Mask, allocator:
             data[key] = buf
         }
         case []f64: {
-            buf := make([]f64, n_rows)
+            buf := make([dynamic]f64, n_rows)
             j := 0
             for it, i in v {
                 if mask[i] {
-                    buf[i] = it
+                    buf[j] = it
                     j += 1
                 }
             }
             data[key] = buf
         }
         case []string: {
-            buf := make([]string, n_rows)
+            buf := make([dynamic]string, n_rows)
             j := 0
             for it, i in v {
                 if mask[i] {
-                    buf[i] = it
+                    buf[j] = it
                     j += 1
                 }
             }
             data[key] = buf
         }
         case []bool: {
-            buf := make([]bool, n_rows)
+            buf := make([dynamic]bool, n_rows)
             j := 0
             for it, i in v {
                 if mask[i] {
-                    buf[i] = it
+                    buf[j] = it
                     j += 1
                 }
             }
@@ -170,7 +172,7 @@ apply_mask_to_dataframeslice :: proc(df: ^DataFrameSlice, mask: Mask, allocator:
         }
         }
     }
-    rt = DataFrameSlice{n_rows, data}
+    rt = DataFrame{n_rows, data}
     success = true
     return rt, success
 }

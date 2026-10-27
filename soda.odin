@@ -258,7 +258,7 @@ get_slice_dataframe_to_dataframeslice :: proc(
     allocator:= context.temp_allocator
 ) -> (dfs: DataFrameSlice, success: bool) {
 
-    max_row := df.n_rows - 1
+    max_row := df.n_rows
     min_row := 0
     if _min, _ok := _min_row.?; _ok {
         min_row = _min
@@ -267,7 +267,7 @@ get_slice_dataframe_to_dataframeslice :: proc(
         max_row = _max
     }
     n_rows := max_row - min_row
-    if n_rows <= 0 || min_row < 0 || max_row >= df.n_rows {
+    if n_rows <= 0 || min_row < 0 || max_row > df.n_rows {
         // TODO: write a better help statement
         fmt.eprintln("bad row inputs ", min_row, max_row)
         return 
@@ -320,7 +320,7 @@ where T == DataFrame || T == DataFrameSlice {
 
     row := make(Row, allocator) 
     for key, value in df.data {
-        switch &v in value {
+        switch v in value {
         case [dynamic]int    when T == DataFrame else []int:    row[key] = &v[index]
         case [dynamic]f64    when T == DataFrame else []f64:    row[key] = &v[index]
         case [dynamic]string when T == DataFrame else []string: row[key] = &v[index]
