@@ -1,41 +1,27 @@
 # Simple Odin Data Analysis (SODA)
 
 ## Description
-SODA is a simple, minimal, data analysis tool in the Odin language. The tool is
-heavily influenced by Pandas and hopes to provide a similar api experience in a
-statically compiled language. The tool is not meant for production usage, it
-does not intend to be a one to one replacement for Pandas. It is primarily a
-tool to help learn the Odin language and provide some support for data analysis
-in Odin when ever I get tired of Python.
+SODA is a simple, minimal, data analysis library written in the Odin
+programming language. The library is heavily influenced by
+[Pandas](https://pandas.pydata.org/) and hopes to provide a similar API
+experience in a statically compiled language. The tool is not meant to be a one
+to one Pandas replacement. It is primarily a means of learning the Odin
+programming language and providing an simple Pandas alternative for a
+statically compiled language.
 
 ## Features
 SODA handles:
-- String, int, and f64 data types
-- slicing of both columns and dataframes
-- complex computation interface
+- [X] String, int, and f64 data types
+- [X] Columns and DataFrames slices
+- [X] reading and writing csv files.
+- [X] reading and writing parquet files.
+- [ ] Drawing scatter plots.
+- [ ] Drawing histograms.
 
-## Feature Roadmap
-There is a "shortlist" of features I'd like to add to the library. The features
-include the ability to handle dates, missing data, and compressed data formats
---like parquet. There maybe more, but these are the most pressing.  There is no
-timeline for feature implementation, but I expect to "need" them in the short
-term. So they may come sooner than later. Below is a more complete list of
-features I expect to add.
 
-- [X] read parquet file
-- [X] write csv file
-- [ ] date types
-- [ ] query parser
-- [ ] handle missing data
-- [ ] plotting interface (currently the plotting interface is sketch out in
-  code, but has been lightly used)
-- [ ] plotting backend. (currently the default plotting backend is plplot and
-  I'm not sure if this is the backend the package will go with in the future.
-- [ ] the ability to share state between executables. Analyzing data in python
-  is "nice" primarily because Python is interpreted and state is maintained,
-  naturally, between statements. This allows users explore and tweak algorithms
-  without needing to reload or reconstruct state.
-- [ ] i32 and f32 types
-- [ ] 3D vector types i.e. `[3]f32`
-- [ ] simd optimizations
-- [ ] ...
+## Dependencies
+Parquet reading and writing requires
+[carquet](https://github.com/Vitruves/carquet). This repository contains a
+statically compiled copy of that library for Linux. If you want to use this
+library on Windows or MacOs systems you will need to compile carquet on your
+system and updated the carqet bindings.
