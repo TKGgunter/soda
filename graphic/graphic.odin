@@ -191,32 +191,36 @@ start_backend :: proc(interactive: bool, fonts: []InnerFont, log_tracing:= false
 
         if !rl.IsWindowReady() do return backend, false
 
-        backend.interactive = interactive
-        backend.render_texture = rl.LoadRenderTexture(WIDTH, HEIGHT)
     }
+    backend.interactive = interactive
+    backend.render_texture = rl.LoadRenderTexture(WIDTH, HEIGHT)
 
-    assert(FONT_MAP == nil)  // Today, we expect start_backend to only be called once. Tomorrow we may not.
-    FONT_MAP = make(map[InnerFont]rl.Font)
-    for inner_font in fonts {
+    if FONT_MAP == nil {  // Today, we expect start_backend to only be called once. Tomorrow we may not.
+        FONT_MAP = make(map[InnerFont]rl.Font)
+        for inner_font in fonts {
 
-        font : rl.Font
-        switch source in inner_font.source {
-        case Path:
+            font : rl.Font
+            switch source in inner_font.source {
+            case Path:
 
-            c_font_path := strings.clone_to_cstring(source, temp_allocator)
-            font = rl.LoadFontEx(c_font_path, i32(inner_font.size), nil, 0)
-            FONT_MAP[{inner_font.size, strings.clone(source)}] = font
+                c_font_path := strings.clone_to_cstring(source, temp_allocator)
+                font = rl.LoadFontEx(c_font_path, i32(inner_font.size), nil, 0)
+                FONT_MAP[{inner_font.size, strings.clone(source)}] = font
 
-        case InternalFont:
+            case InternalFont:
 
-            internal_font_data, n_bytes := get_internal_font(source)
-            font = rl.LoadFontFromMemory(".ttf", internal_font_data, i32(n_bytes), i32(inner_font.size), nil, 0)
-            FONT_MAP[{inner_font.size, source}] = font
+                internal_font_data, n_bytes := get_internal_font(source)
+                font = rl.LoadFontFromMemory(".ttf", internal_font_data, i32(n_bytes), i32(inner_font.size), nil, 0)
+                FONT_MAP[{inner_font.size, source}] = font
 
+            }
         }
-
     }
 
+    // TODO: we should not be storing the handles to the shaders in the backend.
+    // Additionally, we load via the temp allocator, I'm not sure what the
+    // shader loading will do if the text is de-allocated. I would assume that
+    // these shaders are compiled once loading the strings from memory.
     vertex_source := strings.clone_to_cstring(POINT_VERTEX_SHADER, temp_allocator)
     fragment_source := strings.clone_to_cstring(POINT_FRAGMENT_SHADER, temp_allocator)
     backend.point_shader = rl.LoadShaderFromMemory(vertex_source, fragment_source)
@@ -640,12 +644,17 @@ draw_data_scatter :: proc(
     rlgl.DisableShader()
 }
 
-store_frame :: proc(backend: Backend) -> rl.Image {
+store_frame :: proc(backend: Backend) -> (rl.Image, bool) {
     image := rl.LoadImageFromTexture(backend.render_texture.texture)
+    if image.data == nil {
+
+        fmt.eprintln("Image was not able to load for backend texture.")
+        return image, false
+    }
 
     // Render textures are stored upside down relative to image space.
     rl.ImageFlipVertical(&image)
-    return image 
+    return image, true
 }
 
 delete_frame :: proc(image: rl.Image) {

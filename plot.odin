@@ -72,7 +72,7 @@ Palette :: union {
     GradientPalette
 }
 
-Color    :: rl.Color
+Color :: rl.Color
 
 GradientPalette :: struct { 
     low,
@@ -320,12 +320,29 @@ where T == ^DataFrame || T == ^DataFrameSlice {
     return plot
 }
 
+// TODO: I'm am sure we are loosing memory, we will fix later.
+// - add param for a dataframe just in case the user wants to use a different dataframe.
+reset_plot :: proc(plot: ^Plot($T)) {
+    clear_layers(plot)
+
+    plot.scales = [ScaleAes]Scale{}
+    plot.facet = .None
+    plot.coord = Coord {}
+    plot.theme = Theme {}
+    plot.labels = Labels {}
+
+}
+
 add_mapping :: proc(plot: ^Plot($T), mapping: Aesthetic) {
     plot.mapping = mapping
 }
 
 add_scatter :: proc(plot: ^Plot($T), position:= Position.Identity, size:f32=1, alpha:f32=1, symbol_code:=PointSymbolCode.Dot, mapping:Maybe(Aesthetic)=nil) {
     append(&plot.layers, Layer{Point{size, alpha, symbol_code}, position, mapping})
+}
+
+clear_layers :: proc(plot: ^Plot($T)) {
+    clear(&plot.layers)
 }
 
 delete_plot :: proc(plot: Plot($T)) {
@@ -553,26 +570,6 @@ draw :: proc(
             graphic_element.x_axis.title_rotation        = 0
             graphic_element.x_axis.color                 = tick_font.color
 
-            /*
-            graphic_element.x_axis = graphic.Axis {
-                major_tick_config = graphic.Ticks {
-                    first_tick_position = 0,
-                    step_size           = tick_step,
-                    text_rotation       = 0,
-                    color               = tick_font.color,
-                    length              = 8,
-                    font                = tick_font,
-                },
-                major_tick_labels     = _axis_tick_labels_from_numerals(p.coord.x_min.(f64), p.coord.x_max.(f64), N_TICKS),
-                major_tick_label_font = tick_font,
-                minor_tick_config     = nil,
-                title                 = p.labels.x.(string),
-                title_font            = title_font,
-                title_alignment       = .Center,
-                title_rotation        = 0,
-                color                 = tick_font.color,
-            }
-            */
 
             y_slice, _ := get_columnslice(p.dataframe^, p.layers[0].mapping.?.y)
             graphic_element.y_axis = _init_axis_config(
@@ -674,7 +671,7 @@ draw :: proc(
 
     #partial switch format {
     case .Png: 
-        rt.image = graphic.store_frame(p.backend)
+        rt.image, ok = graphic.store_frame(p.backend)
     }
     return 
 }
@@ -684,7 +681,7 @@ SaveError :: union {
     os.Error,
 }
 
-save :: proc(path: string, g: ^Graphic) -> SaveError {
+save_graphic :: proc(path: string, g: ^Graphic) -> SaveError {
     if g.is_svg {
         panic("svg not implemented.")
     } else {
