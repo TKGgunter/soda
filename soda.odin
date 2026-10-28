@@ -293,7 +293,7 @@ get_slice_dataframe_to_dataframeslice :: proc(
         _v, e :=  df.data[column_name]
         if e == false {
             delete(data)
-            return dfs, success
+            return dfs, false
         }
 
         switch v in _v {
@@ -306,6 +306,7 @@ get_slice_dataframe_to_dataframeslice :: proc(
 
     dfs.n_rows = n_rows
     dfs.data = data
+    success = true
 
     return dfs, success
 }
