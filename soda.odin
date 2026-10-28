@@ -512,11 +512,9 @@ append_rowwise :: proc(df1: ^DataFrame, df2: ^DataFrame) -> (success: bool) {
 head :: proc{head_column, head_dataframe}
 
 head_dataframe :: proc(df: DataFrame) {
-    if df_slice, ok := get_slice(df, 0, 5); ok {
-        fmt.println(df_slice)
-    } else {
-        fmt.println(df)
-    }
+    df_slice, ok := get_slice(df, 0, min(5, df.n_rows))
+    assert(ok)
+    fmt.println(df_slice)
 }
 
 head_column :: proc(column: Column) {
