@@ -44,7 +44,6 @@ INTER_24PT_MEDIUM :: #load("Inter_24pt-Medium.ttf")
 INTER_24PT_LIGHT  :: #load("Inter_24pt-Light.ttf")
 
 
-
 Panel :: struct {
     color: Color,
 
@@ -239,7 +238,7 @@ close_backend :: proc(backend: Backend) {
     rl.CloseWindow()
 }
 
-// Assumes it called in a rl.BeginDrawing loop
+// Must be called after rl.BeginDrawing is called.
 begin_panel :: proc(panel: Panel, backend: Backend) {
     if backend.interactive do rl.BeginDrawing()
 
@@ -314,9 +313,6 @@ make_scatter_point_buffer :: proc(x_values, y_values: []f32, backend: ^Backend) 
     return len(backend.vertex_map) - 1
 }
 
-
-// TODO: graphics should have a beginning and an end. This is so that we can
-// draw multiple datasets on a single graphic.
 begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
 
     temp_allocator := context.temp_allocator
@@ -339,7 +335,7 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
         }
         switch graphic.title_alignment {
         case .Left: 
-            CURRENT_GRAPHIC_TITLE_RECT.x = 2*PADDING
+            CURRENT_GRAPHIC_TITLE_RECT.x = 2 * PADDING
         case .Center:
             CURRENT_GRAPHIC_TITLE_RECT.x = (CURRENT_GRAPHIC_DST_RECT.width - title_shape.x) / 2
         case .Right:
@@ -347,6 +343,7 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
         }
     }
 
+    // Calculate initial Y-Axis Title and Y-Axis Rectangles
     {
         y_axis := graphic.y_axis
         c_y_axis := strings.clone_to_cstring(y_axis.title, temp_allocator)
@@ -383,7 +380,7 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
 
             cgyatr := CURRENT_GRAPHIC_Y_AXIS_TITLE_RECT 
             CURRENT_GRAPHIC_Y_AXIS_RECT = {
-                cgyatr.x + cgyatr.width + PADDING + TICK_WIDTH + max_width,
+                cgyatr.x + cgyatr.width + 2 * PADDING + TICK_WIDTH + max_width,
                 span_top,
                 AXIS_WIDTH,
                 0 // Deduce later in the source code.
@@ -391,6 +388,7 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
         }
     }
 
+    // Calculate initial X-Axis Title and X-Axis Rectangles
     {
         x_axis := graphic.x_axis
         c_x_axis := strings.clone_to_cstring(x_axis.title, temp_allocator)
@@ -440,9 +438,9 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
     }
 
 
-    CURRENT_GRAPHIC_Y_AXIS_RECT.height = CURRENT_GRAPHIC_X_AXIS_RECT.y -  CURRENT_GRAPHIC_Y_AXIS_RECT.y
+    CURRENT_GRAPHIC_Y_AXIS_RECT.height = (CURRENT_GRAPHIC_X_AXIS_RECT.y + CURRENT_GRAPHIC_X_AXIS_RECT.height) -  CURRENT_GRAPHIC_Y_AXIS_RECT.y
     {
-        span_top    := calc_span_top()  // CURRENT_GRAPHIC_TITLE_RECT.y + CURRENT_GRAPHIC_TITLE_RECT.height + PADDING
+        span_top    := calc_span_top()
         span_bottom := CURRENT_GRAPHIC_DST_RECT.height - PADDING
         y_axis := graphic.y_axis
 
@@ -473,7 +471,6 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
         plot_background_rect := CURRENT_GRAPHIC_PLOT_RECT
 
         plot_background_rect.width  += TICK_WIDTH / 2
-        plot_background_rect.y      -= TICK_WIDTH / 2
         plot_background_rect.height += TICK_WIDTH / 2
 
         rl.DrawRectangleRec(plot_background_rect, graphic.plot_color)
@@ -541,8 +538,8 @@ draw_axis :: proc(axis: Axis, orientation: Orientation) {
             // point the label rotates around.
             origin: [2]f32
             switch orientation {
-            case .Horizontal: origin = {size.x/2, -2*PADDING}       // top center, below the tick
-            case .Vertical:   origin = {size.x, size.y/2}  // right middle, left of the tick
+            case .Horizontal: origin = {size.x/2, -2*PADDING}  // top center, below the tick
+            case .Vertical:   origin = {size.x, size.y/2}      // right middle, left of the tick
             }
             rl.DrawTextPro(label_font, c_label, anchor, origin,
                 math.to_degrees(major.text_rotation), axis.major_tick_label_font.size,

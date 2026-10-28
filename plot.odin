@@ -3,6 +3,7 @@ package soda
 import "core:fmt"
 import "core:os"
 import "core:math"
+import "core:slice"
 import "base:runtime"
 
 import "graphic"
@@ -199,7 +200,8 @@ delete_graphic :: proc(g: Graphic, loc:= #caller_location) {
     rl.UnloadImage(g.image)
 }
 
-to_f64_slice :: proc(cs: ColumnSlice, allocator := context.temp_allocator) -> (out: []f64, ok: bool) {
+@(private="file")
+_to_f64_slice :: proc(cs: ColumnSlice, allocator := context.temp_allocator) -> (out: []f64, ok: bool) {
     switch v in cs {
     case []int:
         buf := make([]f64, len(v), allocator)
@@ -208,7 +210,19 @@ to_f64_slice :: proc(cs: ColumnSlice, allocator := context.temp_allocator) -> (o
     case []f64:
         return v, true
     case []string:
-        return nil, false
+
+        buf := make([]f64, len(v), allocator)
+
+        cloned_data, err := slice.clone(v)
+        slice.sort(cloned_data)
+        unique_strings := slice.unique(cloned_data)
+
+        for it, i in v {
+            for jt, j in unique_strings {
+                if it == jt do buf[i] = f64(j) / f64(len(unique_strings) - 1)
+            }
+        }
+        return buf, true
     case []bool:
         return nil, false
     }
@@ -218,13 +232,61 @@ to_f64_slice :: proc(cs: ColumnSlice, allocator := context.temp_allocator) -> (o
 // Evenly spaced tick labels from lo to hi inclusive, matching Ticks with
 // first_tick_position = 0 and step_size = 1/(n-1).
 @(private="file")
-_axis_tick_labels :: proc(lo, hi: f64, n: int, allocator := context.temp_allocator) -> []string {
+_axis_tick_labels_from_numerals :: proc(lo, hi: f64, n: int, allocator := context.temp_allocator) -> []string {
     labels := make([]string, n, allocator)
     for i in 0..<n {
         v := lo + (hi - lo) * f64(i) / f64(n - 1)
         labels[i] = fmt.aprintf("%.3g", v, allocator = allocator)
     }
     return labels
+}
+
+@(private="file")
+_axis_tick_labels_from_strings :: proc(data: []string, allocator := context.temp_allocator) -> []string {
+    data_clone, _ := slice.clone(data)
+    slice.sort(data_clone)
+    unique_data := slice.unique(data_clone)
+    return unique_data
+}
+
+// TODO maybe remove _tick_step
+@(private="file")
+_init_axis_config :: proc(n: int, lo, hi: f64, tick_offset: Maybe(f64), tick_font: graphic.Font, data: ColumnSlice) -> graphic.Axis {
+
+    labels : []string
+    tick_step : f64
+
+    first_tick_position : f64 = tick_offset.? or_else lo
+    switch v in data {
+    case []int, []f64: {
+        labels = _axis_tick_labels_from_numerals(lo, hi, n)
+        tick_step = (hi - lo) / f64(n - 1)
+    }
+    case []string: {
+        labels = _axis_tick_labels_from_strings(v)
+        first_tick_position = 0.0
+        tick_step = 1.0 / f64(len(labels) - 1)
+    }
+    case []bool : {
+        fmt.eprintln("TODO - configure labels for boolean data.")
+    }
+    }
+
+    graphic_axis := graphic.Axis {
+        major_tick_config = graphic.Ticks {
+            first_tick_position = f32(first_tick_position),
+            step_size           = f32(tick_step),
+            text_rotation       = 0,
+            color               = tick_font.color,
+            length              = 8,
+            font                = tick_font,
+        },
+        major_tick_labels     = labels,
+        major_tick_label_font = tick_font,
+        minor_tick_config     = nil,
+    }
+
+    return graphic_axis
 }
 
 
@@ -332,7 +394,7 @@ draw :: proc(
         }
     }
 
-    {  // TODO: This function is long and difficult to wield. It can and
+    {  // TODO: This function is long and difficult to read/understand. It can and
        // probably should be broken in to smaller pieces.
          if p.coord.x_min == nil || p.coord.x_max == nil {
             x_min := math.F32_MAX
@@ -466,6 +528,7 @@ draw :: proc(
                 color = p.theme.text_color
             }
 
+            // TODO: when the column is a string, then N_TICKS is the number of unique strings
             tick_step := f32(1) / f32(N_TICKS - 1)
             // TODO: we need a algo to determine the first tick position value.
             // IDEA: take the range to determine the order of magnitude. Use
@@ -473,6 +536,24 @@ draw :: proc(
             // this will help determine the first_tick_position.
             // first_tick_position := 0
 
+            x_slice, _ := get_columnslice(p.dataframe^, p.layers[0].mapping.?.x)
+            graphic_element.x_axis = _init_axis_config(
+                N_TICKS,
+                p.coord.x_min.(f64),
+                p.coord.x_max.(f64),
+                nil,
+                tick_font,
+                x_slice 
+            )
+
+            graphic_element.x_axis.minor_tick_config     = nil
+            graphic_element.x_axis.title                 = p.labels.x.(string)
+            graphic_element.x_axis.title_font            = title_font
+            graphic_element.x_axis.title_alignment       = .Center
+            graphic_element.x_axis.title_rotation        = 0
+            graphic_element.x_axis.color                 = tick_font.color
+
+            /*
             graphic_element.x_axis = graphic.Axis {
                 major_tick_config = graphic.Ticks {
                     first_tick_position = 0,
@@ -482,7 +563,7 @@ draw :: proc(
                     length              = 8,
                     font                = tick_font,
                 },
-                major_tick_labels     = _axis_tick_labels(p.coord.x_min.(f64), p.coord.x_max.(f64), N_TICKS),
+                major_tick_labels     = _axis_tick_labels_from_numerals(p.coord.x_min.(f64), p.coord.x_max.(f64), N_TICKS),
                 major_tick_label_font = tick_font,
                 minor_tick_config     = nil,
                 title                 = p.labels.x.(string),
@@ -491,24 +572,23 @@ draw :: proc(
                 title_rotation        = 0,
                 color                 = tick_font.color,
             }
-            graphic_element.y_axis = graphic.Axis {
-                major_tick_config = graphic.Ticks {
-                    first_tick_position = 0,
-                    step_size           = tick_step,
-                    text_rotation       = 0,
-                    color               = tick_font.color,
-                    length              = 8,
-                    font                = tick_font,
-                },
-                major_tick_labels     = _axis_tick_labels(p.coord.y_min.(f64), p.coord.y_max.(f64), N_TICKS),
-                major_tick_label_font = tick_font,
-                minor_tick_config     = nil,
-                title                 = p.labels.y.(string),
-                title_font            = title_font,
-                title_alignment       = .Center,
-                title_rotation        = -math.PI / 2,
-                color                 = tick_font.color,
-            }
+            */
+
+            y_slice, _ := get_columnslice(p.dataframe^, p.layers[0].mapping.?.y)
+            graphic_element.y_axis = _init_axis_config(
+                N_TICKS,
+                p.coord.y_min.(f64),
+                p.coord.y_max.(f64),
+                nil,
+                tick_font,
+                y_slice 
+            )
+            graphic_element.y_axis.title                 = p.labels.y.(string)
+            graphic_element.y_axis.title_font            = title_font
+            graphic_element.y_axis.title_alignment       = .Center
+            graphic_element.y_axis.title_rotation        = -math.PI / 2
+            graphic_element.y_axis.color                 = tick_font.color
+
             graphic_element.x_axis_grid = true
             graphic_element.y_axis_grid = true
 
@@ -527,7 +607,7 @@ draw :: proc(
         dst_rect := graphic.Rectangle {
             p.panel.title_position.x,
             40,
-            f32(p.backend.render_texture.texture.width) - 2*p.panel.title_position.x,
+            f32(p.backend.render_texture.texture.width) - 2 * p.panel.title_position.x,
             f32(p.backend.render_texture.texture.height) - 60
         }
         graphic.begin_graphic(graphic_element, dst_rect)
@@ -535,8 +615,8 @@ draw :: proc(
         for layer, i in p.layers {
             x, _ := get_columnslice(p.dataframe^, layer.mapping.?.x)
             y, _ := get_columnslice(p.dataframe^, layer.mapping.?.y)
-            xs, xs_ok := to_f64_slice(x)
-            ys, ys_ok := to_f64_slice(y)
+            xs, xs_ok := _to_f64_slice(x)
+            ys, ys_ok := _to_f64_slice(y)
 
             min_x := f32(p.coord.x_min.(f64))
             max_x := f32(p.coord.x_max.(f64))
@@ -549,12 +629,20 @@ draw :: proc(
                 x_values[i] = f32(it) - min_x
                 x_values[i] /= range_x
             }
+            graphic_element.x_axis.major_tick_config.first_tick_position -=  min_x
+            graphic_element.x_axis.major_tick_config.first_tick_position /=  range_x
+            graphic_element.x_axis.major_tick_config.step_size /=  range_x
+
             y_values := make([]f32, len(ys), context.temp_allocator)
             range_y := (max_y - min_y)
             for it, i in ys {
                 y_values[i] = f32(it) - min_y
                 y_values[i] /= range_y
             }
+            graphic_element.y_axis.major_tick_config.first_tick_position -=  min_y
+            graphic_element.y_axis.major_tick_config.first_tick_position /=  range_y
+            graphic_element.y_axis.major_tick_config.step_size /=  range_y
+
 
             if xs_ok == false || ys_ok == false {
                 // TODO
@@ -565,7 +653,7 @@ draw :: proc(
             switch g in layer.geom {
             // TODO: we don't use any the aspects of the Point struct
             case Point:
-                // TODO: store some where
+                // TODO: we should calculate this every time
                 scatter_index := graphic.make_scatter_point_buffer(x_values, y_values, &p.backend)
                 graphic.draw_data_scatter(
                     .Circle,
