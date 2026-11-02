@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "core:slice"
+import "core:testing"
 
 // TODO:
 // [x] Update function signature to conform with how odin passes objects. 
@@ -17,8 +18,8 @@ import "core:slice"
 //
 // [X] add booleans
 //
-// [ ] complete plotting?
-//      [ ] simple internal scatter plot
+// [-] complete plotting?
+//      [-] simple internal scatter plot
 //
 // [-] Complete petal analysis and create a set of tests as an example.
 //
@@ -90,20 +91,16 @@ where T == DataFrame || T == DataFrameSlice || T == ^DataFrame || T == ^DataFram
 make_dataframe_from_literal :: proc(column_names: []string, columns: ..ColumnSlice, allocator:= context.allocator) -> DataFrame {
     
     n_columns := len(column_names)
-    if n_columns != len(columns) {
-        panic("number of columns are not the same.")
-    }
+    assert(n_columns == len(columns), "The of elements in column_names is not equal to the number of columns provided.")
+
     n_rows := 0
     for &c, i in columns {
 
         if i == 0 {
             n_rows = len_column(c)
             
-        } else {
-            if n_rows != len_column(c) {
-                panic("column lengths are not the same")
-            }
-        }
+        } 
+        assert(n_rows == len_column(c), "The number of rows is in consistent, the columns lengths must match.")
     }
 
     m := make(map[string]Column, allocator)
@@ -173,10 +170,10 @@ where T == Column || T == ColumnSlice  #optional_ok {
     return
 }
 
-// TODO: rename to get_column_names AND pass in an allocator
 get_column_names :: proc(dataframe: $T, allocator:= context.allocator) -> (rt: []ColumnName, err: runtime.Allocator_Error)
 where T == DataFrame || T == DataFrameSlice {
     rt, err = slice.map_keys(dataframe.data, allocator)
+    slice.sort(rt)
     return rt, err
 }
 
@@ -198,9 +195,9 @@ get_columnslice_from_dataframe :: proc(df: DataFrame, column_name: string) -> (c
     return cl, true
 }
 
-get_slice :: proc {get_slice_dataframe_to_dataframeslice, get_slice_columnslice_to_columnslice, get_slice_column_to_columnslice}
+get_slice :: proc {get_slice_of_dataframe, get_slice_of_columnslice, get_slice_of_column}
 
-get_slice_column_to_columnslice :: proc(column: Column, index_min, index_max: int) -> (rt: ColumnSlice, ok: bool) {
+get_slice_of_column :: proc(column: Column, index_min, index_max: int) -> (rt: ColumnSlice, ok: bool) {
     l := len_column(column)
     if index_max > l || index_min < 0{
         return 
@@ -222,9 +219,9 @@ get_slice_column_to_columnslice :: proc(column: Column, index_min, index_max: in
     return
 }
 
-get_slice_columnslice_to_columnslice :: proc(column: ColumnSlice, index_min, index_max: int) -> (rt: ColumnSlice, ok: bool) {
+get_slice_of_columnslice :: proc(column: ColumnSlice, index_min, index_max: int) -> (rt: ColumnSlice, ok: bool) {
     l := len_column(column)
-    if index_max > l || index_min < 0{
+    if index_max > l || index_min < 0 {
         return 
     }
     switch c in column {
@@ -250,7 +247,7 @@ get_slice_columnslice_to_columnslice :: proc(column: ColumnSlice, index_min, ind
 //
 // FUTURE: Currently testing the use of Maybe for row index inputs. Its unclear how
 // useful they are.
-get_slice_dataframe_to_dataframeslice :: proc(
+get_slice_of_dataframe :: proc(
     df: DataFrame, 
     _min_row: Maybe(int), 
     _max_row: Maybe(int), 
@@ -269,7 +266,7 @@ get_slice_dataframe_to_dataframeslice :: proc(
     n_rows := max_row - min_row
     if n_rows <= 0 || min_row < 0 || max_row > df.n_rows {
         // TODO: write a better help statement
-        fmt.eprintln("bad row inputs ", min_row, max_row)
+        fmt.eprintln("Bad row inputs row inputs ", min_row, max_row)
         return 
     }
     
@@ -320,13 +317,9 @@ where T == DataFrame || T == DataFrameSlice {
     }
 
     row := make(Row, allocator) 
-    for key, value in df.data {
-        switch v in value {
-        case [dynamic]int    when T == DataFrame else []int:    row[key] = &v[index]
-        case [dynamic]f64    when T == DataFrame else []f64:    row[key] = &v[index]
-        case [dynamic]string when T == DataFrame else []string: row[key] = &v[index]
-        case [dynamic]bool   when T == DataFrame else []bool:   row[key] = &v[index]
-        }
+    for key, &value in df.data {
+        v := get_ptr(&value, index)
+        row[key] = v
     }
     return row, true
 }
@@ -390,10 +383,10 @@ append_row :: proc(df: ^DataFrame, row: RowLiteral) -> (success: bool) {
     }
 
     for k, v in row {
-        _c := df.data[k]
+        _c := &df.data[k]
         switch &c in _c {
-        case [dynamic]int: append(&c, v.(int))
-        case [dynamic]f64: append(&c, v.(f64))
+        case [dynamic]int:  append(&c, v.(int))
+        case [dynamic]f64:  append(&c, v.(f64))
         case [dynamic]string: append(&c, strings.clone(v.(string), df.data.allocator))
         case [dynamic]bool: append(&c, v.(bool))
         }
@@ -405,6 +398,7 @@ append_row :: proc(df: ^DataFrame, row: RowLiteral) -> (success: bool) {
 }
 
 
+// Appends column to dataframe. The dataframe now owns the columns memory. The column should not be appended to outside of the dataframe.
 append_column :: proc(df: ^DataFrame, column_name: string, column: Column) -> bool {
     if df.n_rows != len_column(column) {
         return false
@@ -418,6 +412,21 @@ append_column :: proc(df: ^DataFrame, column_name: string, column: Column) -> bo
     }
     return true
 }
+
+// TODO
+// append_columnslice :: proc(df: ^DataFrame, column_name: string, column: ColumnSlice) -> bool {
+//     if df.n_rows != len_column(column) {
+//         return false
+//     }
+// 
+//     if _, ok := df.data[column_name]; ok {
+//         return false
+//     } else {
+//         cn := strings.clone(column_name, df.data.allocator)
+//         df.data[cn] = column
+//     }
+//     return true
+// }
 
 // This function eats df2, the caller should no longer use it as it's contents
 // are owned by df1
@@ -520,20 +529,11 @@ head_dataframe :: proc(df: DataFrame) {
 
 head_column :: proc(column: Column) {
     column_len := len_column(column)
-    switch c in column {
-    case [dynamic]int: {
-        fmt.println(ColumnSlice(c[0:min(column_len, 5)]))
-    }
-    case [dynamic]f64: {
-        fmt.println(ColumnSlice(c[0:min(column_len, 5)]))
-    }
-    case [dynamic]string: {
-        fmt.println(ColumnSlice(c[0:min(column_len, 5)]))
-    }
-    case [dynamic]bool: {
-        fmt.println(ColumnSlice(c[0:min(column_len, 5)]))
-    }
-    }
+    c_slice, ok := get_slice_of_column(column, 0, min(column_len, 5))
+
+    assert(ok)
+
+    fmt.println(c_slice)
 }
 
 // TODO should not print but return the slice, maybe
@@ -553,7 +553,7 @@ unique :: proc { unique_column, unique_columnslice }
 
 unique_column :: proc(column: Column, allocator:= context.allocator) -> ColumnSlice {
     rt := ColumnSlice({})
-    column_slice, _ := get_slice_column_to_columnslice(column, 0, len_column(column))
+    column_slice, _ := get_slice_of_column(column, 0, len_column(column))
 
     return unique_columnslice(column_slice)
 }
@@ -609,6 +609,19 @@ where T == Column || T == ColumnSlice {
     case [dynamic]bool   when T == Column else []bool:   n_rows = len(v)
     }
     return n_rows
+}
+
+make_column :: proc(type: typeid, length: int, allocator:= context.allocator) -> (c: Column, err: runtime.Allocator_Error)  {
+
+    switch type {
+    case int : c = make([dynamic]int, length, allocator) or_return
+    case f64 : c = make([dynamic]f64, length, allocator) or_return
+    case string : c = make([dynamic]string, length, allocator) or_return
+    case bool : c = make([dynamic]bool, length, allocator) or_return
+    case      : panic("This type is not allowed.")
+    }
+
+    return c, .None
 }
 
 delete_dataframe :: proc(df: DataFrame, loc := #caller_location) -> runtime.Allocator_Error {
@@ -671,4 +684,88 @@ init_formatter :: proc "contextless" () {
     fmt.register_user_formatter(DataFrameSlice, dataframeslice_formatter)
     fmt.register_user_formatter(Column, column_formatter)
     fmt.register_user_formatter(ColumnSlice, columnslice_formatter)
+}
+
+
+/// UNIT TESTING
+
+@(test)
+t_append_column_to_dataframe_success :: proc(t: ^testing.T) {
+    df := make_dataframe_from_literal(
+        []string{"a", "b"},
+        []int{1, 2, 3},
+        []f64{1.5, 2.5, 3.5}
+    )
+
+    c, _ := make_column(int, 3)
+    // TODO: is this useful
+    // set_data(&c, 0, 3)
+    c.([dynamic]int)[0] = 3
+    c.([dynamic]int)[1] = 4
+    c.([dynamic]int)[2] = 5
+
+    append_column(&df, "c", c)
+
+    testing.expect(t, df.n_rows == 3)
+
+    names, err := get_column_names(df)
+    testing.expect(t, err == nil)
+    
+    for name, i in names {
+       switch i {
+       case 0: testing.expect(t, name == "a")
+       case 1: testing.expect(t, name == "b")
+       case 2: testing.expect(t, name == "c")
+       }
+    }
+
+    delete(names)
+    delete_dataframe(df)
+}
+
+@(test)
+t_append_row_to_dataframe_success :: proc(t: ^testing.T) {
+    df := make_dataframe_from_literal(
+        []string{"a", "b"},
+        []int{1, 2, 3},
+        []f64{1.5, 2.5, 3.5}
+    )
+    defer delete_dataframe(df)
+
+    row := make(RowLiteral)
+    row["a"] = 4
+    row["b"] = 2.4
+
+    ok := append_row(&df, row)
+    testing.expect(t, ok)
+    
+    delete_map(row)
+
+    testing.expect(t, df.n_rows == 4)
+
+    for i in 0..<df.n_rows {
+        r, ok := get_row(df, i)
+        defer delete_map(r)
+
+        testing.expect(t, ok)
+
+        switch i {
+        case 0: {
+            testing.expect(t, r["a"].(^int)^ == 1)
+            testing.expect(t, r["b"].(^f64)^ == 1.5)
+        }
+        case 1: {
+            testing.expect(t, r["a"].(^int)^ == 2)
+            testing.expect(t, r["b"].(^f64)^ == 2.5)
+        }
+        case 2: {
+            testing.expect(t, r["a"].(^int)^ == 3)
+            testing.expect(t, r["b"].(^f64)^ == 3.5)
+        }
+        case 3: {
+            testing.expect(t, r["a"].(^int)^ == 4)
+            testing.expect(t, r["b"].(^f64)^ == 2.4)
+        }
+        }
+    }
 }
