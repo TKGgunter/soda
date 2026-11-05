@@ -1,6 +1,7 @@
 package soda
 
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:math"
 import "core:slice"
@@ -97,19 +98,10 @@ Grid :: struct {
 
 
 Coord :: struct {
-    kind:         CoordKind,
     x_min, x_max: Maybe(f64),
     y_min, y_max: Maybe(f64),
     ratio:        f32,
 }
-
-CoordKind :: enum {
-    Cartesian = 0,
-    // What is flip and fixed?
-    Flip,
-    Fixed
-}
-
 
 Theme :: struct {
     panel_background,
@@ -268,7 +260,7 @@ _init_axis_config :: proc(n: int, lo, hi: f64, tick_offset: Maybe(f64), tick_fon
         tick_step = 1.0 / f64(len(labels) - 1)
     }
     case []bool : {
-        fmt.eprintln("TODO - configure labels for boolean data.")
+        log.warn("plot: axis labels for boolean data are not yet supported.")
     }
     }
 
@@ -398,7 +390,7 @@ draw :: proc(
     _, x_ok := get_columnslice(p.dataframe^, p.mapping.x)
     _, y_ok := get_columnslice(p.dataframe^, p.mapping.y)
     if !x_ok || !y_ok {
-        fmt.eprintln("plot: mapping.x / mapping.y must name existing columns")
+        log.errorf("plot: mapping.x %q and mapping.y %q must name existing columns.", p.mapping.x, p.mapping.y)
         return 
     }
 
@@ -430,8 +422,7 @@ draw :: proc(
                 x_max = max(max_value.(f64), x_max)
             }
             case string, bool: {
-                // TODO: remove warning when comfortable.
-                fmt.eprintln("X min/max is 0/1 for strings and bool")
+                log.debugf("plot: x axis column %q is a string or bool column, using a 0-1 range.", p.mapping.x)
                 x_min = 0
                 x_max = 1
             }
@@ -452,8 +443,7 @@ draw :: proc(
                     x_max = max(max_value.(f64), x_max)
                 }
                 case string, bool: {
-                    // TODO: remove warning when comfortable.
-                    fmt.eprintln("X min/max is 0/1 for strings and bool")
+                    log.debugf("plot: x axis column %q is a string or bool column, using a 0-1 range.", aes.x)
                     x_min = 0
                     x_max = 1
                 }
@@ -481,8 +471,7 @@ draw :: proc(
                 y_max = max(max_value.(f64), y_max)
             }
             case string, bool: {
-                // TODO: remove warning when comfortable.
-                fmt.eprintln("X min/max is 0/1 for strings and bool")
+                log.debugf("plot: y axis column %q is a string or bool column, using a 0-1 range.", p.mapping.y)
                 y_min = 0
                 y_max = 1
             }
@@ -503,8 +492,7 @@ draw :: proc(
                     y_max = max(max_value.(f64), y_max)
                 }
                 case string, bool: {
-                    // TODO: remove warning when comfortable.
-                    fmt.eprintln("X min/max is 0/1 for strings and bool")
+                    log.debugf("plot: y axis column %q is a string or bool column, using a 0-1 range.", aes.y)
                     y_min = 0
                     y_max = 1
                 }
@@ -643,7 +631,7 @@ draw :: proc(
 
             if xs_ok == false || ys_ok == false {
                 // TODO
-                fmt.eprintln("Data could not be turned in to a float")
+                log.error("plot: layer data could not be converted to floats.")
                 return
             }
 

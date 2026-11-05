@@ -2,6 +2,7 @@ package soda
 
 import "base:runtime"
 import "core:fmt"
+import "core:log"
 import "core:reflect"
 import "core:strings"
 import "core:testing"
@@ -60,7 +61,7 @@ where T == DataFrame || T == DataFrameSlice
     case string: {
         rt, ok = get_columnslice(df^, v)
         if !ok {
-            fmt.eprintln("Unable to find column.")
+            log.errorf("get_operand: unable to find column %q.", v)
         }
     }
     case int: {
@@ -467,29 +468,29 @@ exec :: proc(
 
     // TODO: the error string is in a haphazard place. This should probably be
     // constructed in a function and returned.
-    error_string := fmt.tprintf("Attempting to compare an %v to a %v. This is not valid. Numeric types cannot be compared against non-numerics.", lr.l, lr.r)
+    error_string := fmt.tprintf("exec: Attempting to compare an %v to a %v. This is not valid. Numeric types cannot be compared against non-numerics.", lr.l, lr.r)
 
     // I would like to rely on the compiler to check for coverage. If I ever
     // learn this I would like to come back and improve.
     switch lr {
     case LR{int, int}, LR{int, f64}, LR{f64, int}, LR{f64, f64}, LR{string, string}, LR{bool, bool}: {
         // Strange ask... there is nothing to do.
-        fmt.eprintln("Attempting to create a mask using two scalar values. Request is not valid.")
+        log.error("exec: Attempting to create a mask using two scalar values. Request is not valid.")
     }
     case LR{int, ColumnSlice}: {
         switch right_column in right.(ColumnSlice) {
         case []int: mask = cmd__int__arr_int(left.(int), right_column, allocator)
         case []f64: mask = cmd__int__arr_f64(left.(int), right_column, allocator)
-        case []string: fmt.eprintln(error_string)
-        case []bool: fmt.eprintln(error_string)
+        case []string: log.error(error_string)
+        case []bool: log.error(error_string)
         }
     }
     case LR{f64, ColumnSlice}: {
         switch right_column in right.(ColumnSlice) {
         case []int: mask = cmd__f64__arr_int(left.(f64), right_column, allocator)
         case []f64: mask = cmd__f64__arr_f64(left.(f64), right_column, allocator)
-        case []string: fmt.eprintln(error_string)
-        case []bool: fmt.eprintln(error_string)
+        case []string: log.error(error_string)
+        case []bool: log.error(error_string)
         }
     }
     case LR{ColumnSlice, int}: {
@@ -497,10 +498,10 @@ exec :: proc(
         case []int: mask = cmd__arr_int__int(left_column, right.(int), allocator)
         case []f64: mask = cmd__arr_f64__int(left_column, right.(int), allocator)
         case []string: {
-            fmt.eprintln(error_string)
+            log.error(error_string)
         }
         case []bool: {
-            fmt.eprintln(error_string)
+            log.error(error_string)
         }
         }
     }
@@ -509,17 +510,17 @@ exec :: proc(
         case []int: mask = cmd__arr_int__f64(left_column, right.(f64), allocator)
         case []f64: mask = cmd__arr_f64__f64(left_column, right.(f64), allocator)
         case []string: {
-            fmt.eprintln(error_string)
+            log.error(error_string)
         }
         case []bool: {
-            fmt.eprintln(error_string)
+            log.error(error_string)
         }
         }
     }
     case LR{string, ColumnSlice}: {
         switch right_column in right.(ColumnSlice) {
         case []int, []f64, []bool: {
-            fmt.eprintln("Attempting to compare a string to a numeric or boolean. This is not valid. Numeric types cannot be compared against strings.")
+            log.error("exec: Attempting to compare a string to a numeric or boolean. This is not valid. Numeric types cannot be compared against strings.")
         }
         case []string: mask = cmd__str__arr_str(left.(string), right_column, allocator)
         }
@@ -528,7 +529,7 @@ exec :: proc(
         // TODO
         switch left_column in left.(ColumnSlice) {
         case []int, []f64, []bool: {
-            fmt.eprintln("Attempting to compare a string to a numeric or boolean. This is not valid. Numeric types cannot be compared against strings.")
+            log.error("exec: Attempting to compare a string to a numeric or boolean. This is not valid. Numeric types cannot be compared against strings.")
         }
         case []string: {
             mask = cmd__arr_str__str(left_column, right.(string), allocator)
@@ -541,23 +542,23 @@ exec :: proc(
             switch r in right.(ColumnSlice) {
             case []int: mask = cmd__arr_int__arr_int(l, r, allocator)
             case []f64: mask = cmd__arr_int__arr_f64(l, r, allocator)
-            case []string: fmt.eprintln(error_string)
-            case []bool: fmt.eprintln(error_string)
+            case []string: log.error(error_string)
+            case []bool: log.error(error_string)
             }
         }
         case []f64: {
             switch r in right.(ColumnSlice) {
             case []int: mask = cmd__arr_f64__arr_int(l, r, allocator)
             case []f64: mask = cmd__arr_f64__arr_f6(l, r, allocator)
-            case []string: fmt.eprintln(error_string)
-            case []bool: fmt.eprintln(error_string)
+            case []string: log.error(error_string)
+            case []bool: log.error(error_string)
             }
         }
         case []string: {
             switch r in right.(ColumnSlice) {
             case []string: cmd__arr_str__arr_str(l, r, allocator)
             case []int, []f64, []bool: {
-                fmt.eprintln("Attempting to compare a string to a numeric or boolean. This is not valid. Numeric types cannot be compared against strings.")
+                log.error("exec: Attempting to compare a string to a numeric or boolean. This is not valid. Numeric types cannot be compared against strings.")
             }
             }
         }
@@ -565,14 +566,14 @@ exec :: proc(
             switch r in right.(ColumnSlice) {
             case []bool: cmd__arr_bool__arr_bool(l, r, allocator)
             case []int, []f64, []string: {
-                fmt.eprintln("Attempting to compare a numeric or string to a boolean. This is not valid. Booleans can only be compared against booleans.")
+                log.error("exec: Attempting to compare a numeric or string to a boolean. This is not valid. Booleans can only be compared against booleans.")
             }
             }
         }
         }
     }
     case: {
-        fmt.eprintln("Unknown and not implemented operands.")
+        log.errorf("exec: unknown and not implemented operands. Left: %v Right: %v", lr.l, lr.r)
     }
     }
     return mask

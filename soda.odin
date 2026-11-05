@@ -2,6 +2,7 @@ package soda
 
 import "base:runtime"
 import "core:fmt"
+import "core:log"
 import "core:strings"
 import "core:slice"
 import "core:testing"
@@ -26,7 +27,7 @@ import "core:testing"
 // [-] Review function which allocate memory and return the allocations to the
 //      caller. In these cases the function should take an allocator.
 //
-// [ ] replace prints e.g. eprintln with logging
+// [X] replace prints e.g. eprintln with logging
 //
 // [ ] set nulls
 //     look at https://arrow.apache.org/docs/format/Intro.html#support-for-null-values
@@ -139,7 +140,7 @@ make_dataframe_from_literal :: proc(column_names: []string, columns: ..ColumnSli
 
 get :: proc(column: ColumnSlice, index: int) -> (rt: Data, ok: bool) {
     if index >= len_column(column) || index < 0 {
-        fmt.eprintln("Attempting to retrieve a column element from an index outside of column range: ", index)
+        log.errorf("get: index %v is outside of column range. Column length %v", index, len_column(column))
         return
     }
 
@@ -156,7 +157,7 @@ get :: proc(column: ColumnSlice, index: int) -> (rt: Data, ok: bool) {
 get_ptr :: proc(column: ^$T, index: int) -> (rt: DataPtr, ok: bool)
 where T == Column || T == ColumnSlice  #optional_ok {
     if index >= len_column(column^) || index < 0 {
-        fmt.eprintln("Attempting to retrieve a column element from an index outside of column range: ", index)
+        log.errorf("get_ptr: index %v is outside of column range. Column length %v", index, len_column(column^))
         return
     }
 
@@ -266,7 +267,7 @@ get_slice_of_dataframe :: proc(
     n_rows := max_row - min_row
     if n_rows <= 0 || min_row < 0 || max_row > df.n_rows {
         // TODO: write a better help statement
-        fmt.eprintln("Bad row inputs row inputs ", min_row, max_row)
+        log.errorf("get_slice: bad row inputs. Requested rows [%v, %v) but dataframe has %v rows.", min_row, max_row, df.n_rows)
         return 
     }
     
@@ -311,8 +312,7 @@ get_slice_of_dataframe :: proc(
 get_row :: proc(df: $T, index: int, allocator:= context.temp_allocator) -> (Row, bool) 
 where T == DataFrame || T == DataFrameSlice {
     if index >= df.n_rows {
-        // log level error
-        fmt.eprintln("Index out of range.")
+        log.errorf("get_row: index %v is out of range. Dataframe has %v rows.", index, df.n_rows)
         return nil, false
     }
 
@@ -327,8 +327,7 @@ where T == DataFrame || T == DataFrameSlice {
 get_data :: proc(df: $T, key: ColumnName, index: int) -> (Data, bool) 
 where T == DataFrame || T == DataFrameSlice {
     if index >= df.n_rows {
-        // TODO: log level error
-        fmt.eprintln("Index out of range.")
+        log.errorf("get_data: index %v is out of range. Dataframe has %v rows.", index, df.n_rows)
         return nil, false
     }
 
@@ -346,7 +345,7 @@ append_row :: proc(df: ^DataFrame, row: RowLiteral) -> (success: bool) {
     // Test the row names and type before appending to insure we don't dirty
     // our dataframe.
     if len(df.data) != len(row) {
-        fmt.eprintfln("Dataframe and row have un-equal number of columns. Dataframe length %v  Row length %v", len(df.data), len(row))
+        log.errorf("append_row: dataframe and row have un-equal number of columns. Dataframe length %v, row length %v", len(df.data), len(row))
         return success
     }
 
@@ -355,7 +354,7 @@ append_row :: proc(df: ^DataFrame, row: RowLiteral) -> (success: bool) {
     for k, v in df.data {
         _r, r_ok := row[k] 
         if r_ok == false {
-            fmt.eprintln("Row does not contain column: ", k)
+            log.errorf("append_row: row does not contain column %q.", k)
             return success
         }
         switch r in _r {
@@ -432,18 +431,19 @@ append_column :: proc(df: ^DataFrame, column_name: string, column: Column) -> bo
 // are owned by df1
 append_columnwise :: proc(df1: ^DataFrame, df2: ^DataFrame) -> (success: bool) {
     if df1.n_rows != df2.n_rows {
-        fmt.eprintln("Dataframe 1 and 2 do not have the same number of rows.")
+        log.errorf("append_columnwise: dataframe 1 and 2 do not have the same number of rows. Dataframe 1 rows %v, dataframe 2 rows %v", df1.n_rows, df2.n_rows)
         return false
     }
 
     if df1.data.allocator != df2.data.allocator {
-        fmt.eprintln("Dataframe 1 and 2 use different allocators, append task aborted.")
+        log.error("append_columnwise: dataframe 1 and 2 use different allocators, append task aborted.")
+        log.debugf("append_columnwise: dataframe 1 allocator %v, dataframe 2 allocator %v", df1.data.allocator, df2.data.allocator)
         return false
     }
 
     for key, value in df2.data {
         if _, ok := df1.data[key]; ok {
-            fmt.eprintln("Skipping column %v source dataframe already contains an entry", key)
+            log.warnf("append_columnwise: skipping column %q, dataframe 1 already contains an entry.", key)
             continue
         } else {
             df1.data[key] = value
@@ -457,14 +457,14 @@ append_columnwise :: proc(df1: ^DataFrame, df2: ^DataFrame) -> (success: bool) {
 append_rowwise :: proc(df1: ^DataFrame, df2: ^DataFrame) -> (success: bool) {
 
     if len(df1.data) != len(df2.data) {
-        fmt.eprintfln("Dataframe and row have un-equal number of columns. Dataframe length %v  Row length %v", len(df1.data), len(df2.data))
+        log.errorf("append_rowwise: dataframes have un-equal number of columns. Dataframe 1 columns %v, dataframe 2 columns %v", len(df1.data), len(df2.data))
         return false
     }
 
     for key, column2 in df2.data {
         _v, v_ok := df1.data[key]
         if v_ok == false {
-            fmt.eprintln("Key in dataframe 2 not found in dataframe 1. Key: ", key)
+            log.errorf("append_rowwise: column %q in dataframe 2 not found in dataframe 1.", key)
             return false
         }
 

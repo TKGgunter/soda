@@ -19,6 +19,25 @@ SODA handles:
 - [ ] Drawing histograms.
 
 
+## Logging
+SODA reports problems through Odin's `core:log`, which writes to
+`context.logger`. SODA never sets up a logger itself. If your program does not
+set one, these messages are discarded. To see them, set a logger in `main`:
+
+```odin
+context.logger = log.create_console_logger(.Info)
+defer log.destroy_console_logger(context.logger)
+```
+
+Log levels:
+- `INFO`: state information for the lay person.
+- `DEBUG`: detail for the software maintainer. Use `.Debug` as the minimum
+  level to see it.
+- `WARNING`: something went wrong, but the operation went ahead (for example,
+  a column was skipped).
+- `ERROR`: the requested operation failed and returned `false` or an error.
+  SODA does not stop your program; check the returned value.
+
 ## Dependencies
 Parquet reading and writing requires
 [carquet](https://github.com/Vitruves/carquet). This repository contains a

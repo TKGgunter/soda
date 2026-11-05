@@ -1,6 +1,6 @@
 package soda
 
-import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:slice"
 import "core:testing"
@@ -20,7 +20,7 @@ min_in_columnslice :: proc(column: ColumnSlice) -> (min: Data, ok: bool) {
     case []f64: min, ok = slice.min(c[:])
     case []string: min, ok = slice.min(c[:])
     case []bool:
-        fmt.eprintln("booleans are not ordered types. Request to find minimum failed.")
+        log.error("min_in: booleans are not ordered types. Request to find minimum failed.")
         ok = false
         return
     }
@@ -42,7 +42,7 @@ max_in_columnslice :: proc(column: ColumnSlice) -> (max: Data, ok: bool) {
     case []f64: max, ok = slice.max(c[:])
     case []string: max, ok = slice.max(c[:])
     case []bool : {
-        fmt.eprintln("booleans are not ordered types. Request to find maximum failed.")
+        log.error("max_in: booleans are not ordered types. Request to find maximum failed.")
         ok = false
         return
     }
@@ -64,7 +64,7 @@ range_columnslice :: proc(column: ColumnSlice) -> (min, max: Data, ok: bool) {
     case []f64: min, max, ok = slice.min_max(c[:])
     case []string : min, max, ok = slice.min_max(c[:])
     case []bool:
-        fmt.eprintln("booleans are not ordered types. Request to find minimum failed.")
+        log.error("range: booleans are not ordered types. Request to find range failed.")
         ok = false
     }
     return
@@ -158,12 +158,12 @@ std_columnslice :: proc(c: ColumnSlice) -> (rt: Data, success: bool) {
     }
     case []string: {
         success = false
-        fmt.eprintln("Improper calculation request. Attempted to calculate the standard deviation of a string.")
+        log.error("std: improper calculation request. Attempted to calculate the standard deviation of a string.")
         return
     }
     case []bool: {
         success = false
-        fmt.eprintln("Improper calculation request. Attempted to calculate the standard deviation of a boolean.")
+        log.error("std: improper calculation request. Attempted to calculate the standard deviation of a boolean.")
         return
     }
     }
@@ -182,7 +182,7 @@ calc_from_columns_to_column :: proc(
     column_length := len_column(cols[0])
     for i in 1..<len(cols) {
         if column_length != len_column(cols[i]) {
-            fmt.eprintln("Input columns have unequal length.")
+            log.errorf("calc_to_column: input columns have unequal length. Column 0 length %v, column %v length %v", column_length, i, len_column(cols[i]))
             return Column{}, false
         }
     }
@@ -214,7 +214,7 @@ where T == DataFrame || T == DataFrameSlice {
         if c, ok := get_columnslice(df, it); ok {
             columns[i] = c
         } else {
-            fmt.eprintln("Could not retreive column: ", it)
+            log.errorf("calc_to_column: could not retrieve column %q.", it)
             return Column{}, false
         }
     }

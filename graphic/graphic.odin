@@ -1,6 +1,7 @@
 package graphic
 
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:strings"
 import rl "vendor:raylib"
@@ -648,7 +649,7 @@ store_frame :: proc(backend: Backend) -> (rl.Image, bool) {
     image := rl.LoadImageFromTexture(backend.render_texture.texture)
     if image.data == nil {
 
-        fmt.eprintln("Image was not able to load for backend texture.")
+        log.error("store_frame: image was not able to load from the backend texture.")
         return image, false
     }
 
@@ -665,9 +666,9 @@ delete_frame :: proc(image: rl.Image) {
 save_frame :: proc(image: rl.Image, path: string) {
     cpath := strings.clone_to_cstring(path, context.temp_allocator)
     if rl.ExportImage(image, cpath) {
-        fmt.printfln("Saved frame to %s", path)
+        log.infof("Saved frame to %s", path)
     } else {
-        fmt.eprintfln("Failed to save frame to %s", path)
+        log.errorf("save_frame: failed to save frame to %s", path)
     }
 }
 

@@ -2,7 +2,7 @@ package soda
 
 import cq "carquet_bindings"
 import "core:strings"
-import "core:fmt"
+import "core:log"
 
 // Only use in single threaded mode.
 @(private="file")
@@ -33,7 +33,8 @@ reader_open :: proc(filename: string, options: ^cq.carquet_reader_options_t) -> 
     cfilename := strings.clone_to_cstring(filename, context.temp_allocator)
     reader := cq.carquet_reader_open(cfilename, options, &err)
     if reader == nil { 
-        fmt.eprintln("read error: %v\n", err.message)
+        log.errorf("reader_open: unable to open %q.", filename)
+        log.debugf("reader_open: carquet error %v: %s", err.code, cstring(cast([^]u8)&err.message[0]))
         returned_err := cq.carquet_error{}
 	      cq.carquet_error_copy(&returned_err, &err)
         return  Reader{reader}, returned_err
@@ -56,9 +57,11 @@ read_metadata :: proc(reader: ^cq.carquet_reader_t) -> map[string]string {
         case .OK:
             metadata[strings.clone_from_cstring(key)] = strings.clone_from_cstring(value)
         case .ERROR_INVALID_METADATA:
-            fmt.eprintln("Error invalid metadata.")
+            log.warnf("read_parquet: skipping invalid metadata entry %v.", index)
+            log.debugf("read_parquet: carquet metadata status %v", status)
         case:
-            fmt.eprintln("Unexpected error.")
+            log.warnf("read_parquet: unexpected error reading metadata entry %v, entry skipped.", index)
+            log.debugf("read_parquet: carquet metadata status %v", status)
         }
 
     }
@@ -84,7 +87,8 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
         defer cq.carquet_column_reader_free(col)
 
         if col == nil {
-            fmt.eprintln(err)
+            log.errorf("read_parquet: unable to read column %v of %q.", column_index, filename)
+            log.debugf("read_parquet: carquet error %v: %s", err.code, cstring(cast([^]u8)&err.message[0]))
             break
         }
 
@@ -97,7 +101,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
             buf := make([dynamic]f64, n_rows, n_rows, allocator)
 
             if !read_batch(col, buf) {
-                fmt.eprintln("Parquet reader failed to read column ", column_name)
+                log.errorf("read_parquet: failed to read column %q.", column_name)
                 return dataframe, metadata, error
             }
 
@@ -107,7 +111,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
             buf := make([dynamic]int, n_rows, n_rows, allocator)
 
             if !read_batch(col, buf) {
-                fmt.eprintln("Parquet reader failed to read column ", column_name)
+                log.errorf("read_parquet: failed to read column %q.", column_name)
                 return dataframe, metadata, error
             }
 
@@ -117,7 +121,7 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
             buf := make([dynamic]string, n_rows, n_rows, allocator)
 
             if !read_batch(col, buf) {
-                fmt.eprintln("Parquet reader failed to read column ", column_name)
+                log.errorf("read_parquet: failed to read column %q.", column_name)
                 return dataframe, metadata, error
             }
 
@@ -129,13 +133,14 @@ read_parquet :: proc(filename: string, allocator:= context.allocator) -> (datafr
         case .BOOLEAN: {
             buf := make([dynamic]bool, n_rows, n_rows, allocator)
             if !read_batch(col, buf) {
-                fmt.eprintln("Parquet reader failed to read column ", column_name)
+                log.errorf("read_parquet: failed to read column %q.", column_name)
                 return dataframe, metadata, error
             }
             data[column_name] = buf
         }
         case: {
-            fmt.eprintln("Currently doesn't handle physical type: ", cq_physical_type)
+            log.warnf("read_parquet: column %q has an unsupported type and was skipped.", column_name)
+            log.debugf("read_parquet: unhandled carquet physical type %v", cq_physical_type)
             continue
         }
         }

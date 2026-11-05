@@ -1,6 +1,7 @@
 package soda
 
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -35,8 +36,12 @@ write_parquet :: proc(
     metadata: map[string]string = nil,
 ) -> (error: Error) {
     if len_dataframe(df) == 0 {
-        fmt.eprintln("Dataframe contains no rows.")
+        log.errorf("write_parquet: dataframe contains no columns, %q was not written.", filename)
         return _status_error(.ERROR_INVALID_ARGUMENT)
+    }
+
+    if df.n_rows == 0 {
+        log.warnf("write_parquet: dataframe contains no rows, %q will be written with a schema and no data.", filename)
     }
 
     // Column names are pulled to an array to give the file a fixed column
