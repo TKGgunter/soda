@@ -7,6 +7,7 @@ import "core:os"
 import "core:math"
 import "core:reflect"
 import "core:slice"
+import "core:strings"
 
 import "graphic"
 import rl "vendor:raylib"
@@ -24,6 +25,17 @@ Plot :: struct($T: typeid) where T == ^DataFrame || T == ^DataFrameSlice {
     theme:     Theme,
     labels:    Labels,
     shape:      Shape,
+
+    // Set by build_plot. Procedures that change the plot's definition clear it
+    // so draw knows to rebuild.
+    built:      bool,
+
+    // Set by _construct_graphic during build_plot; draw passes them to
+    // graphic.begin_graphic. The Plot owns the axis tick labels.
+    graphic_element: graphic.Graphic,
+    graphic_rect:    graphic.Rectangle,
+    // Allocator the tick labels were made with, so they are freed with it.
+    graphic_allocator: runtime.Allocator,
 
     backend: graphic.PlotBackend,
     panel: graphic.Panel  // TODO: I'm not sure this needs to be here.
@@ -225,7 +237,7 @@ _to_f64_slice :: proc(cs: ColumnSlice, allocator := context.temp_allocator) -> (
 // Evenly spaced tick labels from lo to hi inclusive, matching Ticks with
 // first_tick_position = 0 and step_size = 1/(n-1).
 @(private="file")
-_axis_tick_labels_from_numerals :: proc(lo, hi: f64, n: int, allocator := context.temp_allocator) -> []string {
+_axis_tick_labels_from_numerals :: proc(lo, hi: f64, n: int, allocator := context.allocator) -> []string {
     labels := make([]string, n, allocator)
     for i in 0..<n {
         v := lo + (hi - lo) * f64(i) / f64(n - 1)
@@ -235,16 +247,29 @@ _axis_tick_labels_from_numerals :: proc(lo, hi: f64, n: int, allocator := contex
 }
 
 @(private="file")
-_axis_tick_labels_from_strings :: proc(data: []string, allocator := context.temp_allocator) -> []string {
-    data_clone, _ := slice.clone(data)
+_axis_tick_labels_from_strings :: proc(data: []string, allocator := context.allocator) -> []string {
+    data_clone := slice.clone(data, context.temp_allocator)
     slice.sort(data_clone)
     unique_data := slice.unique(data_clone)
-    return unique_data
+
+    // Labels own their strings so they can be freed the same way as numeral
+    // labels, independent of the dataframe.
+    labels := make([]string, len(unique_data), allocator)
+    for it, i in unique_data do labels[i] = strings.clone(it, allocator)
+    return labels
+}
+
+// Frees labels made by _axis_tick_labels_from_numerals or
+// _axis_tick_labels_from_strings.
+@(private="file")
+_delete_axis_tick_labels :: proc(labels: []string, allocator := context.allocator) {
+    for it in labels do delete(it, allocator)
+    delete(labels, allocator)
 }
 
 // TODO maybe remove _tick_step
 @(private="file")
-_init_axis_config :: proc(n: int, lo, hi: f64, tick_offset: Maybe(f64), tick_font: graphic.Font, data: ColumnSlice) -> graphic.Axis {
+_init_axis_config :: proc(n: int, lo, hi: f64, tick_offset: Maybe(f64), tick_font: graphic.Font, data: ColumnSlice, allocator := context.allocator) -> graphic.Axis {
 
     labels : []string
     tick_step : f64
@@ -252,11 +277,11 @@ _init_axis_config :: proc(n: int, lo, hi: f64, tick_offset: Maybe(f64), tick_fon
     first_tick_position : f64 = tick_offset.? or_else lo
     switch v in data {
     case []int, []f64: {
-        labels = _axis_tick_labels_from_numerals(lo, hi, n)
+        labels = _axis_tick_labels_from_numerals(lo, hi, n, allocator)
         tick_step = (hi - lo) / f64(n - 1)
     }
     case []string: {
-        labels = _axis_tick_labels_from_strings(v)
+        labels = _axis_tick_labels_from_strings(v, allocator)
         first_tick_position = 0.0
         tick_step = 1.0 / f64(len(labels) - 1)
     }
@@ -317,6 +342,7 @@ build_plot :: proc(
     allocator := context.allocator
 ) -> (ok: bool) {
 
+    p.built = false
     _build_plot_theme_defaults(p)
     p.shape = shape
     
@@ -395,6 +421,10 @@ build_plot :: proc(
         }
         p.panel.color = p.theme.panel_background
     }
+
+    _construct_graphic(p, allocator)
+
+    p.built = true
     return true
 }
 
@@ -408,23 +438,29 @@ reset_plot :: proc(plot: ^Plot($T)) {
     plot.coord = Coord {}
     plot.theme = Theme {}
     plot.labels = Labels {}
-
+    plot.built = false
 }
 
 add_mapping :: proc(plot: ^Plot($T), mapping: Aesthetic) {
     plot.mapping = mapping
+    plot.built = false
 }
 
 add_scatter :: proc(plot: ^Plot($T), position:= Position.Identity, size:f32=1, alpha:f32=1, symbol_code:=PointSymbolCode.Dot, mapping:Maybe(Aesthetic)=nil) {
     append(&plot.layers, Layer{Point{size, alpha, symbol_code}, position, mapping})
+    plot.built = false
 }
 
 clear_layers :: proc(plot: ^Plot($T)) {
     clear(&plot.layers)
+    plot.built = false
 }
 
 delete_plot :: proc(plot: Plot($T)) {
     delete(plot.layers)
+    if plot.graphic_allocator.procedure != nil {
+        _delete_graphic_labels(plot.graphic_element, plot.graphic_allocator)
+    }
 }
 
 // TODO
@@ -459,104 +495,23 @@ draw :: proc(
     allocator := context.allocator
 ) -> (rt: Graphic, ok: bool) {  // TODO: return a descriptive error.
 
+    // A plot that has not been built (or was changed since) is built here,
+    // reusing the shape from an earlier build if there was one, so callers can
+    // go straight to draw.
+    if !p.built {
+        shape := p.shape if p.shape != {} else Shape{800, 600}
+        if !build_plot(p, format, shape, allocator) {
+            log.error("plot: draw could not build the plot; check the mapping and layers.")
+            return
+        }
+    }
 
     {
         graphic.begin_panel(p.panel, p.backend)
 
-        graphic_element : graphic.Graphic
-        {
-            tick_font  := graphic.Font{
-                inner_font = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
-                color = p.theme.text_color
-            }
-            title_font := graphic.Font{
-                inner_font = graphic.DEFAULT_FONT_GRAPHIC_TITLE,
-                color = p.theme.text_color
-            }
+        graphic.begin_graphic(p.graphic_element, p.graphic_rect)
 
-            // TODO: when the column is a string, then N_TICKS is the number of unique strings
-            tick_step := f32(1) / f32(N_TICKS - 1)
-            // TODO: we need a algo to determine the first tick position value.
-            // IDEA: take the range to determine the order of magnitude. Use
-            // that to determine the closest and least value to the minimum.
-            // this will help determine the first_tick_position.
-            // first_tick_position := 0
-
-            x_slice, _ := get_columnslice(p.dataframe^, p.layers[0].mapping.?.x)
-            graphic_element.x_axis = _init_axis_config(
-                N_TICKS,
-                p.coord.x_min.(f64),
-                p.coord.x_max.(f64),
-                nil,
-                tick_font,
-                x_slice 
-            )
-
-            graphic_element.x_axis.minor_tick_config     = nil
-            graphic_element.x_axis.title                 = p.labels.x.(string)
-            graphic_element.x_axis.title_font            = title_font
-            graphic_element.x_axis.title_alignment       = .Center
-            graphic_element.x_axis.title_rotation        = 0
-            graphic_element.x_axis.color                 = tick_font.color
-
-
-            y_slice, _ := get_columnslice(p.dataframe^, p.layers[0].mapping.?.y)
-            graphic_element.y_axis = _init_axis_config(
-                N_TICKS,
-                p.coord.y_min.(f64),
-                p.coord.y_max.(f64),
-                nil,
-                tick_font,
-                y_slice 
-            )
-            graphic_element.y_axis.title                 = p.labels.y.(string)
-            graphic_element.y_axis.title_font            = title_font
-            graphic_element.y_axis.title_alignment       = .Center
-            graphic_element.y_axis.title_rotation        = -math.PI / 2
-            graphic_element.y_axis.color                 = tick_font.color
-
-            graphic_element.x_axis_grid = true
-            graphic_element.y_axis_grid = true
-
-            // TODO: will need to update when adding the ability to render many
-            // plots on the same panel.
-            graphic_element.title = ""
-            graphic_element.font  = graphic.Font {
-                graphic.DEFAULT_FONT_PANEL_TITLE,
-                rl.BLACK
-            }
-            graphic_element.title_alignment = .Left
-            graphic_element.background_color = rl.WHITE
-            graphic_element.plot_color = {75, 75, 75, 255}
-        }
-
-        dst_rect := graphic.Rectangle {
-            p.panel.title_position.x,
-            40,
-            f32(p.backend.render_texture.texture.width) - 2 * p.panel.title_position.x,
-            f32(p.backend.render_texture.texture.height) - 60
-        }
-        graphic.begin_graphic(graphic_element, dst_rect)
-
-        // Data is uploaded in data units; the point shader maps it into the
-        // plot area using these bounds.
-        bounds := graphic.DataBounds {
-            min = {f32(p.coord.x_min.(f64)), f32(p.coord.y_min.(f64))},
-            max = {f32(p.coord.x_max.(f64)), f32(p.coord.y_max.(f64))},
-        }
-
-        // Ticks are drawn on the CPU by end_graphic, so they still need to be
-        // normalized to 0-1 here. This is done once, not per layer.
-        {
-            range := bounds.max - bounds.min
-            x_ticks := &graphic_element.x_axis.major_tick_config
-            x_ticks.first_tick_position = (x_ticks.first_tick_position - bounds.min.x) / range.x
-            x_ticks.step_size /= range.x
-
-            y_ticks := &graphic_element.y_axis.major_tick_config
-            y_ticks.first_tick_position = (y_ticks.first_tick_position - bounds.min.y) / range.y
-            y_ticks.step_size /= range.y
-        }
+        bounds := _data_bounds(p)
 
         for layer, i in p.layers {
             x, _ := get_columnslice(p.dataframe^, layer.mapping.?.x)
@@ -593,7 +548,7 @@ draw :: proc(
             }
         }
 
-        graphic.end_graphic(graphic_element)
+        graphic.end_graphic(p.graphic_element)
     }
     // TODO: draw legend
 
@@ -661,4 +616,117 @@ _calc_range :: proc(column: ColumnSlice) -> (v_min, v_max: f64) {
     }
     }
     return 
+}
+
+// Data is uploaded in data units; the point shader maps it into the plot area
+// using these bounds.
+@(private="file")
+_data_bounds :: proc(p: ^Plot($T)) -> graphic.DataBounds {
+    return graphic.DataBounds {
+        min = {f32(p.coord.x_min.(f64)), f32(p.coord.y_min.(f64))},
+        max = {f32(p.coord.x_max.(f64)), f32(p.coord.y_max.(f64))},
+    }
+}
+
+@(private="file")
+_delete_graphic_labels :: proc(g: graphic.Graphic, allocator := context.allocator) {
+    _delete_axis_tick_labels(g.x_axis.major_tick_labels, allocator)
+    _delete_axis_tick_labels(g.y_axis.major_tick_labels, allocator)
+}
+
+// Fills p.graphic_element and p.graphic_rect from the plot's coord, labels,
+// theme and backend. Called by build_plot after coord and labels are resolved.
+// Labels from a previous construction are freed first.
+@(private="file")
+_construct_graphic :: proc(p: ^Plot($T), allocator := context.allocator) {
+    if p.graphic_allocator.procedure != nil {
+        _delete_graphic_labels(p.graphic_element, p.graphic_allocator)
+    }
+    p.graphic_allocator = allocator
+
+    graphic_element : graphic.Graphic
+
+    tick_font  := graphic.Font{
+        inner_font = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+        color = p.theme.text_color
+    }
+    title_font := graphic.Font{
+        inner_font = graphic.DEFAULT_FONT_GRAPHIC_TITLE,
+        color = p.theme.text_color
+    }
+
+    // TODO: when the column is a string, then N_TICKS is the number of unique strings
+    // TODO: we need a algo to determine the first tick position value.
+    // IDEA: take the range to determine the order of magnitude. Use
+    // that to determine the closest and least value to the minimum.
+    // this will help determine the first_tick_position.
+
+    x_slice, _ := get_columnslice(p.dataframe^, p.layers[0].mapping.?.x)
+    graphic_element.x_axis = _init_axis_config(
+        N_TICKS,
+        p.coord.x_min.(f64),
+        p.coord.x_max.(f64),
+        nil,
+        tick_font,
+        x_slice,
+        allocator,
+    )
+    graphic_element.x_axis.minor_tick_config = nil
+    graphic_element.x_axis.title             = p.labels.x.(string)
+    graphic_element.x_axis.title_font        = title_font
+    graphic_element.x_axis.title_alignment   = .Center
+    graphic_element.x_axis.title_rotation    = 0
+    graphic_element.x_axis.color             = tick_font.color
+
+    y_slice, _ := get_columnslice(p.dataframe^, p.layers[0].mapping.?.y)
+    graphic_element.y_axis = _init_axis_config(
+        N_TICKS,
+        p.coord.y_min.(f64),
+        p.coord.y_max.(f64),
+        nil,
+        tick_font,
+        y_slice,
+        allocator,
+    )
+    graphic_element.y_axis.title           = p.labels.y.(string)
+    graphic_element.y_axis.title_font      = title_font
+    graphic_element.y_axis.title_alignment = .Center
+    graphic_element.y_axis.title_rotation  = -math.PI / 2
+    graphic_element.y_axis.color           = tick_font.color
+
+    graphic_element.x_axis_grid = true
+    graphic_element.y_axis_grid = true
+
+    // TODO: will need to update when adding the ability to render many
+    // plots on the same panel.
+    graphic_element.title = ""
+    graphic_element.font  = graphic.Font {
+        graphic.DEFAULT_FONT_PANEL_TITLE,
+        rl.BLACK
+    }
+    graphic_element.title_alignment  = .Left
+    graphic_element.background_color = rl.WHITE
+    graphic_element.plot_color       = {75, 75, 75, 255}
+
+    // Ticks are drawn on the CPU by end_graphic, so their positions are
+    // normalized to 0-1 across the plot area here.
+    {
+        bounds := _data_bounds(p)
+        range  := bounds.max - bounds.min
+        x_ticks := &graphic_element.x_axis.major_tick_config
+        x_ticks.first_tick_position = (x_ticks.first_tick_position - bounds.min.x) / range.x
+        x_ticks.step_size /= range.x
+
+        y_ticks := &graphic_element.y_axis.major_tick_config
+        y_ticks.first_tick_position = (y_ticks.first_tick_position - bounds.min.y) / range.y
+        y_ticks.step_size /= range.y
+    }
+
+    p.graphic_element = graphic_element
+    p.graphic_rect = graphic.Rectangle {
+        p.panel.title_position.x,
+        40,
+        f32(p.backend.render_texture.texture.width) - 2 * p.panel.title_position.x,
+        f32(p.backend.render_texture.texture.height) - 60
+    }
 }
