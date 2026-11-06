@@ -23,7 +23,7 @@ Plot :: struct($T: typeid) where T == ^DataFrame || T == ^DataFrameSlice {
     theme:     Theme,
     labels:    Labels,
 
-    backend: graphic.Backend,
+    backend: graphic.PlotBackend,
     panel: graphic.Panel  // TODO: I'm not sure this needs to be here.
 }
 
@@ -300,15 +300,12 @@ where T == ^DataFrame || T == ^DataFrameSlice {
         layers = make([dynamic]Layer, 0, 1),
     }
 
-    fonts := []graphic.InnerFont{
-        graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
-        graphic.DEFAULT_FONT_PANEL_TITLE,
-        graphic.DEFAULT_FONT_GRAPHIC_TITLE
-    }
-    backend, is_ok := graphic.start_backend(interactive, fonts)
+    assert(graphic.start_backend(interactive), "Failed to start rl.")
+    backend, is_ok := graphic.start_plot_backend(interactive)
+    assert(is_ok, "Failed to initialize plot.")
+
     plot.backend = backend
 
-    assert(is_ok)
     return plot
 }
 

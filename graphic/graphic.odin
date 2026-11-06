@@ -7,15 +7,17 @@ import "core:strings"
 import rl "vendor:raylib"
 import "vendor:raylib/rlgl"
 
-// TODO: this implementation should not be visible to the user
-
-Color :: rl.Color
+Color     :: rl.Color
 Rectangle :: rl.Rectangle
+Path      :: string
 
+// Default frames per second refresh rate of an interactive graphic.
 FPS           :i32: 60
 
+// Default width and height of a panel
 WIDTH         :i32: 560
 HEIGHT        :i32: 560
+
 // TODO: these values are scaled to the width and height texture size.
 // when dealing with much larger textures we may need to scale with it.
 POINT_RADIUS  :f32: 5
@@ -23,9 +25,9 @@ AXIS_WIDTH    :f32: 5
 TICK_WIDTH    :f32: 3
 PADDING       :f32: 3
 
-DEFAULT_FONT_PANEL_TITLE        :: InnerFont {32, .Inter_24pt_Medium }
-DEFAULT_FONT_GRAPHIC_TITLE      :: InnerFont {20, .Inter_24pt_Medium }
-DEFAULT_FONT_AXIS_TICK_LABEL    :: InnerFont {16, .Inter_24pt_Light }
+DEFAULT_FONT_PANEL_TITLE        :: InnerFont {32, .Inter_24pt_Medium}
+DEFAULT_FONT_GRAPHIC_TITLE      :: InnerFont {20, .Inter_24pt_Medium}
+DEFAULT_FONT_AXIS_TICK_LABEL    :: InnerFont {16, .Inter_24pt_Light}
 
 FONT_MAP : map[InnerFont]rl.Font
 
@@ -38,12 +40,17 @@ CURRENT_GRAPHIC_Y_AXIS_RECT       : Rectangle
 CURRENT_GRAPHIC_PLOT_RECT         : Rectangle
 
 
-POINT_VERTEX_SHADER   :: #load("shaders/point.vs", string)
-POINT_FRAGMENT_SHADER :: #load("shaders/point.fs", string)
+POINT_VERTEX_SHADER_SOURCE   :: #load("shaders/point.vs", string)
+POINT_FRAGMENT_SHADER_SOURCE :: #load("shaders/point.fs", string)
+POINT_SHADER : rl.Shader
 
 INTER_24PT_MEDIUM :: #load("Inter_24pt-Medium.ttf")
 INTER_24PT_LIGHT  :: #load("Inter_24pt-Light.ttf")
 
+@private
+IS_INTERACTIVE := false
+@private
+IS_INIT := false
 
 Panel :: struct {
     color: Color,
@@ -98,7 +105,7 @@ Axis :: struct {
 }
 
 // first_tick_position is a value between 0 and 1.
-// step_size is a value between 0 and 1. It is a faction of the range
+// step_size is a value between 0 and 1.
 Ticks :: struct {
     first_tick_position: f32,
     step_size: f32,
@@ -117,9 +124,6 @@ InternalFont :: enum {
     Inter_24pt_Medium,
     Inter_24pt_Light
 }
-
-
-Path :: string
 
 FontData :: union {
     Path,
@@ -147,9 +151,8 @@ Symbol :: enum {
     Box
 }
 
-Backend :: struct {
+PlotBackend :: struct {
     render_texture: rl.RenderTexture,
-    point_shader: rl.Shader,
 
     vertex_map : [dynamic]VertexObject,
     interactive: bool,
@@ -162,7 +165,8 @@ VertexObject :: struct {
     count    : i32,
 }
 
-get_internal_font :: proc(flag: InternalFont) -> (rawptr, int) {
+@(private="file")
+_get_internal_font :: proc(flag: InternalFont) -> (rawptr, int) {
     switch flag {
     case .Inter_24pt_Medium : return raw_data(INTER_24PT_MEDIUM), len(INTER_24PT_MEDIUM)
     case .Inter_24pt_Light : return raw_data(INTER_24PT_LIGHT), len(INTER_24PT_LIGHT)
@@ -170,7 +174,23 @@ get_internal_font :: proc(flag: InternalFont) -> (rawptr, int) {
     return nil, 0
 }
 
-start_backend :: proc(interactive: bool, fonts: []InnerFont, log_tracing:= false) -> (backend: Backend, is_ok: bool) {
+start_plot_backend :: proc(interactive: bool) -> (backend: PlotBackend, is_ok: bool) {
+    assert(IS_INIT, "start_plot_backend: function must be called after start_backend")
+
+    if interactive == true && IS_INTERACTIVE == false {
+        panic("start_plot_backend: caller is attempting to create an interactive plot when the backend is set to be non interactive.")
+    }
+    backend.interactive = interactive
+    backend.render_texture = rl.LoadRenderTexture(WIDTH, HEIGHT)
+
+    is_ok = true
+    return 
+}
+
+start_backend :: proc(interactive: bool, fonts:= []InnerFont{}, log_tracing:= false) -> (is_ok: bool) {
+
+    // TODO: think about this a bit more
+    if IS_INIT do return true
 
     temp_allocator := context.temp_allocator
 
@@ -190,46 +210,68 @@ start_backend :: proc(interactive: bool, fonts: []InnerFont, log_tracing:= false
         rl.SetTargetFPS(FPS)
         rl.InitWindow(WIDTH, HEIGHT, "Simple Odin Data Analysis Graph")
 
-        if !rl.IsWindowReady() do return backend, false
-
+        if !rl.IsWindowReady() do return false
     }
-    backend.interactive = interactive
-    backend.render_texture = rl.LoadRenderTexture(WIDTH, HEIGHT)
+    IS_INTERACTIVE = interactive
 
-    if FONT_MAP == nil {  // Today, we expect start_backend to only be called once. Tomorrow we may not.
-        FONT_MAP = make(map[InnerFont]rl.Font)
-        for inner_font in fonts {
+    setup_default_font_map()
 
-            font : rl.Font
-            switch source in inner_font.source {
-            case Path:
+    assert(FONT_MAP != nil)
+    for inner_font in fonts {
 
-                c_font_path := strings.clone_to_cstring(source, temp_allocator)
-                font = rl.LoadFontEx(c_font_path, i32(inner_font.size), nil, 0)
-                FONT_MAP[{inner_font.size, strings.clone(source)}] = font
+        font : rl.Font
+        switch source in inner_font.source {
+        case Path:
 
-            case InternalFont:
+            c_font_path := strings.clone_to_cstring(source, temp_allocator)
+            font = rl.LoadFontEx(c_font_path, i32(inner_font.size), nil, 0)
+            FONT_MAP[{inner_font.size, strings.clone(source)}] = font
 
-                internal_font_data, n_bytes := get_internal_font(source)
-                font = rl.LoadFontFromMemory(".ttf", internal_font_data, i32(n_bytes), i32(inner_font.size), nil, 0)
-                FONT_MAP[{inner_font.size, source}] = font
+        case InternalFont:
 
-            }
+            internal_font_data, n_bytes := _get_internal_font(source)
+            font = rl.LoadFontFromMemory(".ttf", internal_font_data, i32(n_bytes), i32(inner_font.size), nil, 0)
+            FONT_MAP[{inner_font.size, source}] = font
         }
     }
 
-    // TODO: we should not be storing the handles to the shaders in the backend.
-    // Additionally, we load via the temp allocator, I'm not sure what the
-    // shader loading will do if the text is de-allocated. I would assume that
-    // these shaders are compiled once loading the strings from memory.
-    vertex_source := strings.clone_to_cstring(POINT_VERTEX_SHADER, temp_allocator)
-    fragment_source := strings.clone_to_cstring(POINT_FRAGMENT_SHADER, temp_allocator)
-    backend.point_shader = rl.LoadShaderFromMemory(vertex_source, fragment_source)
+    vertex_source := strings.clone_to_cstring(POINT_VERTEX_SHADER_SOURCE, temp_allocator)
+    fragment_source := strings.clone_to_cstring(POINT_FRAGMENT_SHADER_SOURCE, temp_allocator)
+    if POINT_SHADER == {} do POINT_SHADER = rl.LoadShaderFromMemory(vertex_source, fragment_source)
 
-    return backend, true
+    IS_INIT = true
+
+    is_ok = true
+    return is_ok
 }
 
-close_backend :: proc(backend: Backend) {
+setup_default_font_map :: proc() {
+    if FONT_MAP != nil do return
+
+    fonts := []InnerFont{
+        DEFAULT_FONT_AXIS_TICK_LABEL,
+        DEFAULT_FONT_PANEL_TITLE,
+        DEFAULT_FONT_GRAPHIC_TITLE
+    }
+
+    FONT_MAP = make(map[InnerFont]rl.Font)
+    for inner_font in fonts {
+
+        font : rl.Font
+        switch source in inner_font.source {
+        case Path:
+            panic("Setup default font map should not be getting fonts from files.")
+
+        case InternalFont:
+            internal_font_data, n_bytes := _get_internal_font(source)
+            font = rl.LoadFontFromMemory(".ttf", internal_font_data, i32(n_bytes), i32(inner_font.size), nil, 0)
+            FONT_MAP[{inner_font.size, source}] = font
+
+        }
+    }
+}
+
+cleanup_font_map :: proc() {
     for key, it in FONT_MAP {
         rl.UnloadFont(it)
         switch s in key.source {
@@ -238,13 +280,24 @@ close_backend :: proc(backend: Backend) {
         }
     }
     clear_map(&FONT_MAP)
+}
+
+close_backend :: proc(backend: PlotBackend) {
+
+    // GPU objects must be released before CloseWindow destroys the GL context.
+    for vertex_obj in backend.vertex_map {
+        rlgl.UnloadVertexBuffer(vertex_obj.x_buffer)
+        rlgl.UnloadVertexBuffer(vertex_obj.y_buffer)
+        rlgl.UnloadVertexArray(vertex_obj.array)
+    }
+    delete(backend.vertex_map)
 
     rl.UnloadRenderTexture(backend.render_texture)
     rl.CloseWindow()
 }
 
 // Must be called after rl.BeginDrawing is called.
-begin_panel :: proc(panel: Panel, backend: Backend) {
+begin_panel :: proc(panel: Panel, backend: PlotBackend) {
     if backend.interactive do rl.BeginDrawing()
 
     rl.BeginTextureMode(backend.render_texture)
@@ -256,7 +309,7 @@ begin_panel :: proc(panel: Panel, backend: Backend) {
         panel.font)
 }
 
-end_panel :: proc(backend: Backend) {
+end_panel :: proc(backend: PlotBackend) {
     rl.EndTextureMode()
     texture := backend.render_texture.texture
     rl.DrawTextureRec(texture, {0, 0, f32(texture.width), -f32(texture.height)}, {0, 0}, rl.WHITE)
@@ -279,15 +332,15 @@ draw_text :: proc(text: string, position: [2]f32, rotation: f32, alignment: Alig
     render_size := rl.MeasureTextEx(rl_font, c_title, font.size, 0)
     switch alignment {
     case .Left: { }
-    case .Center: title_position.x += render_size.x/2
-    case .Right: title_position.x  += render_size.x
+    case .Center: title_position.x -= render_size.x / 2
+    case .Right: title_position.x  -= render_size.x
     }
 
     rl.DrawTextPro(rl_font, c_title, title_position, {0, 0},
         math.to_degrees(rotation), font.size,  0, font.color)
 }
 
-make_scatter_point_buffer :: proc(x_values, y_values: []f32, backend: ^Backend) -> int {
+make_scatter_point_buffer :: proc(x_values, y_values: []f32, backend: ^PlotBackend) -> int {
     assert(len(x_values) == len(y_values))
 
     vertex_obj : VertexObject
@@ -365,7 +418,7 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
         // The y axis title runs along the left edge, between the graphic title
         // and the bottom of the graphic. Alignment is along the axis: Left is
         // the bottom (where bottom-to-top text starts), Right is the top.
-        span_top    := calc_span_top()  // CURRENT_GRAPHIC_TITLE_RECT.y + CURRENT_GRAPHIC_TITLE_RECT.height + PADDING
+        span_top    := _calc_span_top()  // CURRENT_GRAPHIC_TITLE_RECT.y + CURRENT_GRAPHIC_TITLE_RECT.height + PADDING
 
         CURRENT_GRAPHIC_Y_AXIS_TITLE_RECT = {
             2*PADDING,
@@ -429,7 +482,12 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
             max_width :f32= 0
             for it in x_axis.major_tick_labels {
                 c_tick_label := strings.clone_to_cstring(it, temp_allocator)
-                x_axis_title_shape := rl.MeasureTextEx(font, c_tick_label, x_axis.title_font.size, 0)
+                x_axis_title_shape := rl.MeasureTextEx(
+                    font,
+                    c_tick_label,
+                    x_axis.title_font.size,
+                    0
+                )
                 max_width = max(max_width, x_axis_title_shape.y) 
             }
             cgxatr := CURRENT_GRAPHIC_X_AXIS_TITLE_RECT
@@ -445,7 +503,7 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
 
     CURRENT_GRAPHIC_Y_AXIS_RECT.height = (CURRENT_GRAPHIC_X_AXIS_RECT.y + CURRENT_GRAPHIC_X_AXIS_RECT.height) -  CURRENT_GRAPHIC_Y_AXIS_RECT.y
     {
-        span_top    := calc_span_top()
+        span_top    := _calc_span_top()
         span_bottom := CURRENT_GRAPHIC_DST_RECT.height - PADDING
         y_axis := graphic.y_axis
 
@@ -520,8 +578,8 @@ draw_axis :: proc(axis: Axis, orientation: Orientation) {
 
     // Minor ticks go first so major ticks are drawn over them where they meet.
     if minor, ok := axis.minor_tick_config.?; ok {
-        for i in 0..<tick_count(minor) {
-            draw_tick(axis_rect, orientation, minor, tick_fraction(minor, i))
+        for i in 0..<_tick_count(minor) {
+            draw_tick(axis_rect, orientation, minor, _tick_fraction(minor, i))
         }
     }
 
@@ -530,10 +588,10 @@ draw_axis :: proc(axis: Axis, orientation: Orientation) {
         major := axis.major_tick_config
         labels := axis.major_tick_labels
         label_font := get_font(axis.major_tick_label_font.inner_font)
-        n_ticks := len(labels) if len(labels) > 0 else tick_count(major)
+        n_ticks := len(labels) if len(labels) > 0 else _tick_count(major)
 
         for i in 0..<n_ticks {
-            anchor := draw_tick(axis_rect, orientation, major, tick_fraction(major, i))
+            anchor := draw_tick(axis_rect, orientation, major, _tick_fraction(major, i))
             if i >= len(labels) do continue
 
             c_label := strings.clone_to_cstring(labels[i], temp_allocator)
@@ -568,13 +626,15 @@ draw_axis :: proc(axis: Axis, orientation: Orientation) {
 }
 
 // Number of ticks from first_tick_position up to and including the end of the axis.
-tick_count :: proc(ticks: Ticks) -> int {
+@(private="file")
+_tick_count :: proc(ticks: Ticks) -> int {
     if ticks.step_size <= 0 do return 0
     // The small epsilon keeps a tick landing exactly on 1 from being lost to rounding.
     return int(math.floor((1 - ticks.first_tick_position)/ticks.step_size + 1e-4)) + 1
 }
 
-tick_fraction :: proc(ticks: Ticks, i: int) -> f32 {
+@(private="file")
+_tick_fraction :: proc(ticks: Ticks, i: int) -> f32 {
     return ticks.first_tick_position + f32(i)*ticks.step_size
 }
 
@@ -601,11 +661,11 @@ draw_data_scatter :: proc(
     symbol: Symbol,
     vertex_obj: VertexObject,
     color: Color,
-    backend: Backend,
+    backend: PlotBackend,
 ) {
 
     if symbol != .Circle do panic("Symbol is not circle. Other symbols have not ben implemented.")
-    shader := backend.point_shader
+    shader := POINT_SHADER
 
     rlgl.DrawRenderBatchActive()
     resolution_loc     := rl.GetShaderLocation(shader, "resolution")
@@ -645,7 +705,7 @@ draw_data_scatter :: proc(
     rlgl.DisableShader()
 }
 
-store_frame :: proc(backend: Backend) -> (rl.Image, bool) {
+store_frame :: proc(backend: PlotBackend) -> (rl.Image, bool) {
     image := rl.LoadImageFromTexture(backend.render_texture.texture)
     if image.data == nil {
 
@@ -662,7 +722,6 @@ delete_frame :: proc(image: rl.Image) {
     rl.UnloadImage(image)
 }
 
-// TODO: output errors
 save_frame :: proc(image: rl.Image, path: string) {
     cpath := strings.clone_to_cstring(path, context.temp_allocator)
     if rl.ExportImage(image, cpath) {
@@ -672,6 +731,7 @@ save_frame :: proc(image: rl.Image, path: string) {
     }
 }
 
-calc_span_top :: proc() -> f32 {
+@(private="file")
+_calc_span_top :: proc() -> f32 {
     return CURRENT_GRAPHIC_TITLE_RECT.y + CURRENT_GRAPHIC_TITLE_RECT.height + 2 *PADDING
 }

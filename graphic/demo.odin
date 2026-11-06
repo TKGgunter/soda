@@ -12,7 +12,8 @@ main :: proc() {
         {32, "Inter_24pt-Medium.ttf"},
     }
 
-    backend, is_ok := start_backend(interactive, fonts)
+    start_backend(interactive, fonts)
+    backend, is_ok := start_plot_backend(interactive)
     defer close_backend(backend)
 
     panel := Panel {

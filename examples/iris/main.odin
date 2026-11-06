@@ -13,6 +13,7 @@ package iris_example
 
 import soda "../../"
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:os"
 
@@ -22,6 +23,11 @@ head :: soda.head
 println :: fmt.println
 
 main :: proc() {
+    // SODA reports problems through core:log, which writes to context.logger.
+    // Without a logger those messages are discarded. Use .Debug instead of
+    // .Info to also see maintainer-level detail.
+    context.logger = log.create_console_logger(.Info)
+    defer log.destroy_console_logger(context.logger)
 
 		data, success := os.read_entire_file("iris.csv", context.allocator)
     defer delete(data, context.allocator)
@@ -36,11 +42,20 @@ main :: proc() {
     unique_species := soda.unique(species)
     println(unique_species)
 
-    // TODO: Plot any two numeric columns.
+    // Task 1: Plot any two numeric columns.
+    {
+        plot := soda.init_plot(&df)
+        defer soda.delete_plot(plot)
+
+        soda.add_mapping(&plot, soda.Aesthetic{x = "petal_length", y = "petal_width"})
+        soda.add_scatter(&plot, size = 1.5)
+        plot.labels.title = "Iris"
+        g, _ := soda.draw(&plot, .Png)
+        soda.save_graphic("petal_length_v_width.png", &g)
+    }
 
 
-    // TODO
-    // Euclidean distance is a technique 
+    // Task 2: Calculate the Euclidean distance
     calc_euclidean_distance :: proc(vars: []Data, constants: []Data) -> f64 {
         pl := vars[0].(f64)
         pl_mean := constants[0].(f64)
@@ -124,12 +139,13 @@ main :: proc() {
 
     plot := soda.init_plot(&df)
     defer soda.delete_plot(plot)
+
     soda.add_mapping(&plot, soda.Aesthetic{x = "petal_length", y = "petal_width"})
     soda.add_scatter(&plot, size = 1.5)
     plot.labels.title = "Iris"
-    g, _ := soda.draw(&plot, .Png)
-    soda.save("test.png", &g)
-    println(g)
+    g, is_ok := soda.draw(&plot, .Png)
+    println("did the plot draw: ", g)
+    soda.save_graphic("test.png", &g)
 
     /* Plotting with SODA is still in the works
     scatter := Plot(^DataFrame) {
