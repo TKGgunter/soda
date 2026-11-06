@@ -55,6 +55,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         exit 1
     fi
 
+    if ! (cd "$tmp_dir" && odin build examples/iris -out:"$tmp_dir/iris_example"); then
+        echo "pre-push: failed to build iris example on $local_sha, aborting push to $remote_ref."
+        exit 1
+    fi
+
     # exit 1 above kills the whole script right away, not just this
     # iteration — so if main is one of several refs in this push and its
     # tests fail, the entire push is aborted, including other branches.
