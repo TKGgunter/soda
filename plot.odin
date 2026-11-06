@@ -1,11 +1,12 @@
 package soda
 
+import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:math"
+import "core:reflect"
 import "core:slice"
-import "base:runtime"
 
 import "graphic"
 import rl "vendor:raylib"
@@ -22,6 +23,7 @@ Plot :: struct($T: typeid) where T == ^DataFrame || T == ^DataFrameSlice {
     coord:     Coord,
     theme:     Theme,
     labels:    Labels,
+    shape:      Shape,
 
     backend: graphic.PlotBackend,
     panel: graphic.Panel  // TODO: I'm not sure this needs to be here.
@@ -139,8 +141,7 @@ OutputFormat :: enum {
 
 Shape :: struct { 
     width,
-    height,
-    channels: int 
+    height: int
 }
 
 DefaultTheme :: Theme {
@@ -309,6 +310,94 @@ where T == ^DataFrame || T == ^DataFrameSlice {
     return plot
 }
 
+build_plot :: proc(
+    p: ^Plot($T),
+    format: OutputFormat,
+    shape := Shape{800, 600},
+    allocator := context.allocator
+) -> (ok: bool) {
+
+    _build_plot_theme_defaults(p)
+    p.shape = shape
+    
+    // Layers need to be mapped to data. If mappings are not defined in either
+    // mapping or layer the plot cannot be made. This checks at one if not both
+    // are present.
+    if p.mapping.x == "" || p.mapping.y == "" {
+        for &layer in p.layers {
+            if layer.mapping == nil do return
+        }
+    }
+
+    if !_validate_mapping(p.dataframe, p.mapping) do return
+
+
+    // Set labels to column names if labels have not been set.
+    if p.labels.x == nil { p.labels.x = p.mapping.x }
+    if p.labels.y == nil { p.labels.y = p.mapping.y }
+
+    for &layer in p.layers {
+        if layer.mapping == nil {
+            layer.mapping = p.mapping
+        }
+    }
+
+    // Set the min and max coordinates if they have not been defined.
+    if p.coord.x_min == nil || p.coord.x_max == nil {
+
+        column := get_columnslice(p.dataframe^, p.mapping.x) or_return
+        x_min, x_max := _calc_range(column)
+
+        for layer in p.layers {
+            aes := layer.mapping.(Aesthetic)
+            layer_column := get_columnslice(p.dataframe^, aes.x) or_return
+            layer_x_min, layer_x_max := _calc_range(layer_column)
+
+            x_min = min(x_min, layer_x_min)
+            x_max = max(x_max, layer_x_max)
+        }
+
+        if p.coord.x_min == nil do p.coord.x_min = x_min - 0.2*math.sqrt(x_max - x_min)
+        if p.coord.x_max == nil do p.coord.x_max = x_max + 0.2*math.sqrt(x_max - x_min)
+    }
+
+    if p.coord.y_min == nil || p.coord.y_max == nil {
+
+        column := get_columnslice(p.dataframe^, p.mapping.y) or_return
+        y_min, y_max := _calc_range(column)
+
+        for layer in p.layers {
+            aes := layer.mapping.(Aesthetic)
+            layer_column := get_columnslice(p.dataframe^, aes.y) or_return
+            layer_y_min, layer_y_max := _calc_range(layer_column)
+
+            y_min = min(y_min, layer_y_min)
+            y_max = max(y_max, layer_y_max)
+        }
+
+        if p.coord.y_min == nil do p.coord.y_min = y_min - 0.2*math.sqrt(y_max - y_min)
+        if p.coord.y_max == nil do p.coord.y_max = y_max + 0.2*math.sqrt(y_max - y_min)
+    }
+
+    assert(p.facet == .None, "Error: facet was not .None. Other variants have not been implemented.")
+
+    {  // Fill out panel
+        p.panel.title = p.labels.title
+        p.panel.title_alignment = .Left
+        // TODO: change how we hard code things
+        p.panel.title_position  = {
+            10, 
+            10
+        }
+        p.panel.font = graphic.Font {
+            color = rl.BLACK,
+            inner_font = graphic.DEFAULT_FONT_PANEL_TITLE
+        }
+        p.panel.color = p.theme.panel_background
+    }
+    return true
+}
+
 // TODO: I'm am sure we are loosing memory, we will fix later.
 // - add param for a dataframe just in case the user wants to use a different dataframe.
 reset_plot :: proc(plot: ^Plot($T)) {
@@ -341,7 +430,7 @@ delete_plot :: proc(plot: Plot($T)) {
 // TODO
 draw_interactive :: proc(
     p: ^Plot($T),
-    shape := Shape{800, 600, 3},
+    shape := Shape{800, 600},
     allocator := context.allocator
 ) {
 }
@@ -367,156 +456,11 @@ _build_plot_theme_defaults :: proc(p: ^Plot($T)) {
 draw :: proc(
     p: ^Plot($T),
     format: OutputFormat,
-    shape := Shape{800, 600, 3},
     allocator := context.allocator
 ) -> (rt: Graphic, ok: bool) {  // TODO: return a descriptive error.
 
-    _build_plot_theme_defaults(p)
-    
-    // Layers need to be mapped to data. If mappings are not defined in either
-    // mapping or layer the plot cannot be made. This checks at one if not both
-    // are present.
-    if p.mapping.x == "" || p.mapping.y == "" {
-        for &layer in p.layers {
-            if layer.mapping == nil do return
-        }
-    }
-
-    // TODO: we only work with x and y at this time. Once we begin using other
-    // mappings we will need to check those as well.
-    _, x_ok := get_columnslice(p.dataframe^, p.mapping.x)
-    _, y_ok := get_columnslice(p.dataframe^, p.mapping.y)
-    if !x_ok || !y_ok {
-        log.errorf("plot: mapping.x %q and mapping.y %q must name existing columns.", p.mapping.x, p.mapping.y)
-        return 
-    }
-
-    if p.labels.x == nil { p.labels.x = p.mapping.x }
-    if p.labels.y == nil { p.labels.y = p.mapping.y }
-
-    for &layer in p.layers {
-        if layer.mapping == nil {
-            layer.mapping = p.mapping
-        }
-    }
-
-    {  // TODO: This function is long and difficult to read/understand. It can and
-       // probably should be broken in to smaller pieces.
-         if p.coord.x_min == nil || p.coord.x_max == nil {
-            x_min := math.F32_MAX
-            x_max := math.F32_MIN
-
-            column := get_columnslice(p.dataframe^, p.mapping.x) or_return
-            min_value, max_value, _ := range(column)
-
-            switch _m in min_value {
-            case int: {
-                x_min = min(f64(_m), x_min)
-                x_max = max(f64(max_value.(int)), x_max)
-            }
-            case f64: {
-                x_min = min(_m, x_min)
-                x_max = max(max_value.(f64), x_max)
-            }
-            case string, bool: {
-                log.debugf("plot: x axis column %q is a string or bool column, using a 0-1 range.", p.mapping.x)
-                x_min = 0
-                x_max = 1
-            }
-            }
-
-            for layer in p.layers {
-                aes := layer.mapping.(Aesthetic)
-                column := get_columnslice(p.dataframe^, aes.x) or_return
-                min_value, max_value, _ := range(column)
-
-                switch _m in min_value {
-                case int: {
-                    x_min = min(f64(_m), x_min)
-                    x_max = max(f64(max_value.(int)), x_max)
-                }
-                case f64: {
-                    x_min = min(_m, x_min)
-                    x_max = max(max_value.(f64), x_max)
-                }
-                case string, bool: {
-                    log.debugf("plot: x axis column %q is a string or bool column, using a 0-1 range.", aes.x)
-                    x_min = 0
-                    x_max = 1
-                }
-                }
-            }
-            if p.coord.x_min == nil do p.coord.x_min = x_min - 0.2*math.sqrt(x_max - x_min)
-            if p.coord.x_max == nil do p.coord.x_max = x_max + 0.2*math.sqrt(x_max - x_min)
-        }
-    }
-    {
-        if p.coord.y_min == nil || p.coord.y_max == nil {
-            y_min := math.F32_MAX
-            y_max := math.F32_MIN
-
-            column := get_columnslice(p.dataframe^, p.mapping.y) or_return
-            min_value, max_value, _ := range(column)
-
-            switch _m in min_value {
-            case int: {
-                y_min = min(f64(_m), y_min)
-                y_max = max(f64(max_value.(int)), y_max)
-            }
-            case f64: {
-                y_min = min(_m, y_min)
-                y_max = max(max_value.(f64), y_max)
-            }
-            case string, bool: {
-                log.debugf("plot: y axis column %q is a string or bool column, using a 0-1 range.", p.mapping.y)
-                y_min = 0
-                y_max = 1
-            }
-            }
-
-            for layer in p.layers {
-                aes := layer.mapping.(Aesthetic)
-                column := get_columnslice(p.dataframe^, aes.y) or_return
-                min_value, max_value, _ := range(column)
-
-                switch _m in min_value {
-                case int: {
-                    y_min = min(f64(_m), y_min)
-                    y_max = max(f64(max_value.(int)), y_max)
-                }
-                case f64: {
-                    y_min = min(_m, y_min)
-                    y_max = max(max_value.(f64), y_max)
-                }
-                case string, bool: {
-                    log.debugf("plot: y axis column %q is a string or bool column, using a 0-1 range.", aes.y)
-                    y_min = 0
-                    y_max = 1
-                }
-                }
-            }
-            if p.coord.y_min == nil do p.coord.y_min = y_min - 0.2*math.sqrt(y_max - y_min)
-            if p.coord.y_max == nil do p.coord.y_max = y_max + 0.2*math.sqrt(y_max - y_min)
-        }
-    }
-
-    assert(p.facet == .None, "Error: facet was not .None. Other variants have not been implemented.")
 
     {
-        {  // Fill out panel
-            p.panel.title = p.labels.title
-            p.panel.title_alignment = .Left
-            // TODO: change how we hard code things
-            p.panel.title_position  = {
-                10, 
-                10
-            }
-            p.panel.font = graphic.Font {
-                color = rl.BLACK,
-                inner_font = graphic.DEFAULT_FONT_PANEL_TITLE
-            }
-            p.panel.color = p.theme.panel_background
-        }
         graphic.begin_panel(p.panel, p.backend)
 
         graphic_element : graphic.Graphic
@@ -594,43 +538,43 @@ draw :: proc(
         }
         graphic.begin_graphic(graphic_element, dst_rect)
 
+        // Data is uploaded in data units; the point shader maps it into the
+        // plot area using these bounds.
+        bounds := graphic.DataBounds {
+            min = {f32(p.coord.x_min.(f64)), f32(p.coord.y_min.(f64))},
+            max = {f32(p.coord.x_max.(f64)), f32(p.coord.y_max.(f64))},
+        }
+
+        // Ticks are drawn on the CPU by end_graphic, so they still need to be
+        // normalized to 0-1 here. This is done once, not per layer.
+        {
+            range := bounds.max - bounds.min
+            x_ticks := &graphic_element.x_axis.major_tick_config
+            x_ticks.first_tick_position = (x_ticks.first_tick_position - bounds.min.x) / range.x
+            x_ticks.step_size /= range.x
+
+            y_ticks := &graphic_element.y_axis.major_tick_config
+            y_ticks.first_tick_position = (y_ticks.first_tick_position - bounds.min.y) / range.y
+            y_ticks.step_size /= range.y
+        }
+
         for layer, i in p.layers {
             x, _ := get_columnslice(p.dataframe^, layer.mapping.?.x)
             y, _ := get_columnslice(p.dataframe^, layer.mapping.?.y)
             xs, xs_ok := _to_f64_slice(x)
             ys, ys_ok := _to_f64_slice(y)
 
-            min_x := f32(p.coord.x_min.(f64))
-            max_x := f32(p.coord.x_max.(f64))
-            min_y := f32(p.coord.y_min.(f64))
-            max_y := f32(p.coord.y_max.(f64))
-
-            x_values := make([]f32, len(xs), context.temp_allocator)
-            range_x := (max_x - min_x)
-            for it, i in xs {
-                x_values[i] = f32(it) - min_x
-                x_values[i] /= range_x
-            }
-            graphic_element.x_axis.major_tick_config.first_tick_position -=  min_x
-            graphic_element.x_axis.major_tick_config.first_tick_position /=  range_x
-            graphic_element.x_axis.major_tick_config.step_size /=  range_x
-
-            y_values := make([]f32, len(ys), context.temp_allocator)
-            range_y := (max_y - min_y)
-            for it, i in ys {
-                y_values[i] = f32(it) - min_y
-                y_values[i] /= range_y
-            }
-            graphic_element.y_axis.major_tick_config.first_tick_position -=  min_y
-            graphic_element.y_axis.major_tick_config.first_tick_position /=  range_y
-            graphic_element.y_axis.major_tick_config.step_size /=  range_y
-
-
             if xs_ok == false || ys_ok == false {
                 // TODO
                 log.error("plot: layer data could not be converted to floats.")
                 return
             }
+
+            // GL vertex buffers are f32, so the values are only narrowed here.
+            x_values := make([]f32, len(xs), context.temp_allocator)
+            for it, j in xs do x_values[j] = f32(it)
+            y_values := make([]f32, len(ys), context.temp_allocator)
+            for it, j in ys do y_values[j] = f32(it)
 
             switch g in layer.geom {
             // TODO: we don't use any the aspects of the Point struct
@@ -640,6 +584,7 @@ draw :: proc(
                 graphic.draw_data_scatter(
                     .Circle,
                     p.backend.vertex_map[scatter_index],
+                    bounds,
                     DefaultPalette[i],
                     p.backend,
                 )
@@ -673,4 +618,47 @@ save_graphic :: proc(path: string, g: ^Graphic) -> SaveError {
         graphic.save_frame(g.image, path)
     }
     return nil
+}
+
+_validate_mapping :: proc(df: ^DataFrame, mapping: Aesthetic) -> (is_ok: bool) {
+
+    is_ok = true
+    for field in reflect.struct_fields_zipped(Aesthetic) {
+        value := reflect.struct_field_value(mapping, field) // returns `any`
+        column_name  := value.(string)
+
+        if column_name == "" do continue
+
+        _, column_exist := get_columnslice(df^, column_name)
+        if !column_exist {
+            log.errorf("plot: mapping.%v = %q does not exist.",
+                field.name, column_name)
+            is_ok = false
+        }
+    }
+
+    return
+}
+
+_calc_range :: proc(column: ColumnSlice) -> (v_min, v_max: f64) {
+    v_min = math.F32_MAX
+    v_max = math.F32_MIN
+
+    min_value, max_value, _ := range(column)
+
+    switch _m in min_value {
+    case int: {
+        v_min = min(f64(_m), v_min)
+        v_max = max(f64(max_value.(int)), v_max)
+    }
+    case f64: {
+        v_min = min(_m, v_min)
+        v_max = max(max_value.(f64), v_max)
+    }
+    case string, bool: {
+        v_min = 0
+        v_max = 1
+    }
+    }
+    return 
 }

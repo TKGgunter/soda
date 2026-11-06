@@ -657,9 +657,18 @@ draw_tick :: proc(axis_rect: Rectangle, orientation: Orientation, ticks: Ticks, 
     return
 }
 
+// The data range that is mapped onto the plot area. min lands on the
+// left/bottom edge, max on the right/top edge.
+DataBounds :: struct {
+    min, max: [2]f32,
+}
+
+// Vertex data is in data units; the shader maps it into the plot area using
+// bounds.
 draw_data_scatter :: proc(
     symbol: Symbol,
     vertex_obj: VertexObject,
+    bounds: DataBounds,
     color: Color,
     backend: PlotBackend,
 ) {
@@ -673,6 +682,8 @@ draw_data_scatter :: proc(
     color_loc          := rl.GetShaderLocation(shader, "colour")
     scale_loc          := rl.GetShaderLocation(shader, "scale")
     translate_loc      := rl.GetShaderLocation(shader, "translate")
+    data_min_loc       := rl.GetShaderLocation(shader, "data_min")
+    data_range_loc     := rl.GetShaderLocation(shader, "data_range")
 
     resolution := [2]f32{f32(WIDTH), f32(HEIGHT)}
     radius     := POINT_RADIUS
@@ -692,12 +703,18 @@ draw_data_scatter :: proc(
         CURRENT_GRAPHIC_PLOT_RECT.y / f32(backend.render_texture.texture.height),
     }
 
+    data_min   := bounds.min
+    data_range := bounds.max - bounds.min
+    assert(data_range.x != 0 && data_range.y != 0, "draw_data_scatter: bounds must have a non-zero range")
+
     rlgl.EnableShader(shader.id)
     rlgl.SetUniform(resolution_loc, &resolution, i32(rlgl.ShaderUniformDataType.VEC2), 1)
     rlgl.SetUniform(radius_loc,     &radius,     i32(rlgl.ShaderUniformDataType.FLOAT), 1)
     rlgl.SetUniform(color_loc,     &color,     i32(rlgl.ShaderUniformDataType.VEC4), 1)
     rlgl.SetUniform(scale_loc,     &scale,     i32(rlgl.ShaderUniformDataType.VEC2), 1)
     rlgl.SetUniform(translate_loc, &translate, i32(rlgl.ShaderUniformDataType.VEC2), 1)
+    rlgl.SetUniform(data_min_loc,   &data_min,   i32(rlgl.ShaderUniformDataType.VEC2), 1)
+    rlgl.SetUniform(data_range_loc, &data_range, i32(rlgl.ShaderUniformDataType.VEC2), 1)
 
     rlgl.EnableVertexArray(vertex_obj.array)
     rlgl.DrawVertexArrayInstanced(0, 6, vertex_obj.count)

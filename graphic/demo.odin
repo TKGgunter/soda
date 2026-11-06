@@ -119,7 +119,8 @@ main :: proc() {
         f32(backend.render_texture.texture.height) - 100,
     }
 
-    // We need to make sure we scale the data set to between 0-1.
+    // Data is in data units; bounds tell the shader which range fills the plot.
+    bounds := DataBounds{min = {0, 0}, max = {1, 1}}
     x_values := []f32{0, 0.1 , 0.20, 0.30, 0.50, 0.7, 0.9}
     y_values := []f32{0, 0.11, 0.22, 0.28, 0.50, 0.7, 0.9}
     scatter_index := make_scatter_point_buffer(x_values, y_values, &backend)
@@ -133,6 +134,7 @@ main :: proc() {
             draw_data_scatter(
                 .Circle,
                 backend.vertex_map[scatter_index],
+                bounds,
                 rl.BLUE,
                 backend
             )
