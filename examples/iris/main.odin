@@ -44,14 +44,14 @@ main :: proc() {
 
     // Task 1: Plot any two numeric columns.
     {
-        plot := soda.init_plot(&df)
+        plot := soda.new_plot(&df)
         defer soda.delete_plot(plot)
 
         soda.add_mapping(&plot, soda.Aesthetic{x = "petal_length", y = "petal_width"})
         soda.add_scatter(&plot, size = 1.5)
         plot.labels.title = "Iris"
-        g, _ := soda.draw(&plot, .Png)
-        soda.save_graphic("petal_length_v_width.png", &g)
+        _ = soda.draw(&plot)
+        soda.save_plot("petal_length_v_width.png", &plot)
     }
 
 
@@ -137,15 +137,14 @@ main :: proc() {
         println("minimum", m)
     }
 
-    plot := soda.init_plot(&df)
+    plot := soda.new_plot(&df)
     defer soda.delete_plot(plot)
 
     soda.add_mapping(&plot, soda.Aesthetic{x = "petal_length", y = "petal_width"})
     soda.add_scatter(&plot, size = 1.5)
     plot.labels.title = "Iris"
-    g, is_ok := soda.draw(&plot, .Png)
-    println("did the plot draw: ", g)
-    soda.save_graphic("test.png", &g)
+    is_ok := soda.draw(&plot)
+    soda.save_plot("test.png", &plot)
 
     /* Plotting with SODA is still in the works
     scatter := Plot(^DataFrame) {

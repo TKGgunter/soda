@@ -12,6 +12,8 @@ import "core:strings"
 import "graphic"
 import rl "vendor:raylib"
 
+Font :: graphic.InnerFont
+
 // TODO
 // Add the selection component 
 // https://idl.cs.washington.edu/files/2017-VegaLite-InfoVis.pdf
@@ -24,11 +26,13 @@ Plot :: struct($T: typeid) where T == ^DataFrame || T == ^DataFrameSlice {
     coord:     Coord,
     theme:     Theme,
     labels:    Labels,
-    shape:      Shape,
+    shape:     Shape,
 
     // Set by build_plot. Procedures that change the plot's definition clear it
     // so draw knows to rebuild.
     built:      bool,
+
+    interactive: bool,
 
     // Set by _construct_graphic during build_plot; draw passes them to
     // graphic.begin_graphic. The Plot owns the axis tick labels.
@@ -66,12 +70,18 @@ Point     :: struct {
 Line      :: struct { linewidth, alpha: f32 }
 Histogram :: struct { bins: int, binwidth: Maybe(f32) }
 
-// TODO explain what these layout options mean.
 Position :: enum {
+    // The default that does not adjust the position.
     Identity,
-    Stack,
+    // For histograms draws one element on top of the other, stacking the two.
+    Stack,  
+    // Insure that histogram elements do not overlap.
     Dodge,
+    // Standardizes the total hight of each histogram element. 
+    // https://ggplot2.tidyverse.org/reference/position_stack.html
     Fill,
+    // Adds some noise to each point to help reduce overlapping.
+    // https://ggplot2.tidyverse.org/reference/position_jitter.html
     Jitter,
 }
 
@@ -120,12 +130,15 @@ Coord :: struct {
 Theme :: struct {
     panel_background,
     plot_background,
+    plot_data_background,
     grid_color,
     text_color: Color,
-    panel_title_font_size,
-    plot_title_font_size,
-    axis_label_font_size,
-    axis_tick_font_size:  f32,
+
+    panel_title_font,
+    plot_title_font,
+    axis_label_font,
+    axis_tick_font: Font,
+
     legend_position:  LegendPosition,
 }
 
@@ -153,30 +166,71 @@ OutputFormat :: enum {
 
 Shape :: struct { 
     width,
-    height: int
+    height: i32
 }
 
-DefaultTheme :: Theme {
+DEFAULT_SHAPE :: Shape {
+    graphic.WIDTH,
+    graphic.HEIGHT
+}
+
+TEST_THEME :: Theme {
     panel_background = rl.BEIGE,
     plot_background  = rl.WHITE,
+    plot_data_background  = {200, 200, 200, 255},
     grid_color       = rl.GRAY,
     text_color       = rl.BLACK,
-    // TODO: transition to Font struct
-    panel_title_font_size = 36,
-    plot_title_font_size  = 24,
-    axis_label_font_size  = 18,
-    axis_tick_font_size   = 18,
+
+    panel_title_font = graphic.DEFAULT_FONT_PANEL_TITLE,
+    plot_title_font  = graphic.DEFAULT_FONT_GRAPHIC_TITLE,
+    axis_label_font  = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+    axis_tick_font   = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
 
     // TODO: temp
     legend_position = .None,
 }
+
+LIGHT_THEME :: Theme {
+    panel_background = rl.WHITE,
+    plot_background  = rl.WHITE,
+    plot_data_background  = rl.WHITE,
+    grid_color       = rl.GRAY,
+    text_color       = rl.BLACK,
+
+    panel_title_font = graphic.DEFAULT_FONT_PANEL_TITLE,
+    plot_title_font  = graphic.DEFAULT_FONT_GRAPHIC_TITLE,
+    axis_label_font  = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+    axis_tick_font   = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+
+    // TODO: temp
+    legend_position = .None,
+}
+
+
+DARK_THEME :: Theme {
+    panel_background = rl.BLACK,
+    plot_background  = rl.BLACK,
+    plot_data_background  = rl.DARKGRAY,
+    grid_color       = rl.GRAY,
+    text_color       = rl.GRAY,
+
+    panel_title_font = graphic.DEFAULT_FONT_PANEL_TITLE,
+    plot_title_font  = graphic.DEFAULT_FONT_GRAPHIC_TITLE,
+    axis_label_font  = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+    axis_tick_font   = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+
+    // TODO: temp
+    legend_position = .None,
+}
+
+DEFAULT_THEME :: DARK_THEME
 
 N_TICKS :: 5
 
 // TODO - I suspect this palette is doing nothing
 // A small default categorical palette (ColorBrewer Set1-ish), used when no
 // Scale{aesthetic = .Color} with a manual palette is attached to the plot.
-DefaultPalette := []Color {
+DEFAULT_PALETTE := []Color {
     rl.BLUE,
     rl.RED,
     rl.GREEN,
@@ -198,7 +252,8 @@ PointSymbolCode :: enum(int) {
 
 Graphic :: struct {
     using  image: rl.Image,
-    is_svg: bool  // This is a stand in flag for more output types that are not handled by odin's image lib.
+    is_svg: bool  // This is a stand in flag for more output types that are not
+                  // handled by odin's image lib.
 }
 
 delete_graphic :: proc(g: Graphic, loc:= #caller_location) {
@@ -307,29 +362,31 @@ _init_axis_config :: proc(n: int, lo, hi: f64, tick_offset: Maybe(f64), tick_fon
     return graphic_axis
 }
 
-
-// ============================== Pixel transform ==========================
-// Backend-agnostic: maps a resolved world-space window onto a raster of
-// `width` x `height` pixels. Pixel y grows downward while world y grows
-// upward, so the y term is inverted relative to x.
-
 PixelTransform :: struct {
     x_min, x_max, y_min, y_max: f64,
     width, height:              int,
 }
 
 // TODO add allocator
-init_plot :: proc(df: $T, interactive:bool=false) -> Plot(T) 
+new_plot :: proc(
+    df: $T, 
+    shape := DEFAULT_SHAPE,
+    interactive:bool=false,
+    allocator:=context.allocator) -> Plot(T) 
 where T == ^DataFrame || T == ^DataFrameSlice {
+
     plot := Plot(T) {
         dataframe = df,
-        layers = make([dynamic]Layer, 0, 1),
+        layers = make([dynamic]Layer, 0, 1, allocator),
+        interactive = interactive,
+        shape = shape
     }
 
-    assert(graphic.start_backend(interactive), "Failed to start rl.")
-    backend, is_ok := graphic.start_plot_backend(interactive)
+    assert(graphic.start_backend(interactive), "Raylib was not and could not be initialized.")
+    backend, is_ok := graphic.start_plot_backend(interactive, shape.width, shape.height)
     assert(is_ok, "Failed to initialize plot.")
 
+    _build_plot_theme_defaults(&plot)
     plot.backend = backend
 
     return plot
@@ -337,26 +394,27 @@ where T == ^DataFrame || T == ^DataFrameSlice {
 
 build_plot :: proc(
     p: ^Plot($T),
-    format: OutputFormat,
-    shape := Shape{800, 600},
+    // TODO replace with a default value
     allocator := context.allocator
 ) -> (ok: bool) {
 
     p.built = false
-    _build_plot_theme_defaults(p)
-    p.shape = shape
     
     // Layers need to be mapped to data. If mappings are not defined in either
     // mapping or layer the plot cannot be made. This checks at one if not both
     // are present.
     if p.mapping.x == "" || p.mapping.y == "" {
+        bad_mappings := false
+        bad_mappings = len(p.layers) == 0
+
         for &layer in p.layers {
-            if layer.mapping == nil do return
+            bad_mappings = layer.mapping == nil
         }
+
+        if bad_mappings do return
     }
 
-    if !_validate_mapping(p.dataframe, p.mapping) do return
-
+    if !_validate_aes_mapping(p.dataframe, p.mapping) do return
 
     // Set labels to column names if labels have not been set.
     if p.labels.x == nil { p.labels.x = p.mapping.x }
@@ -416,8 +474,8 @@ build_plot :: proc(
             10
         }
         p.panel.font = graphic.Font {
-            color = rl.BLACK,
-            inner_font = graphic.DEFAULT_FONT_PANEL_TITLE
+            color = p.theme.text_color,
+            inner_font = p.theme.panel_title_font
         }
         p.panel.color = p.theme.panel_background
     }
@@ -436,7 +494,7 @@ reset_plot :: proc(plot: ^Plot($T)) {
     plot.scales = [ScaleAes]Scale{}
     plot.facet = .None
     plot.coord = Coord {}
-    plot.theme = Theme {}
+    plot.theme = DEFAULT_THEME
     plot.labels = Labels {}
     plot.built = false
 }
@@ -461,46 +519,74 @@ delete_plot :: proc(plot: Plot($T)) {
     if plot.graphic_allocator.procedure != nil {
         _delete_graphic_labels(plot.graphic_element, plot.graphic_allocator)
     }
+    graphic.close_backend(plot.backend)
 }
 
-// TODO
-draw_interactive :: proc(
+show:: proc(
     p: ^Plot($T),
-    shape := Shape{800, 600},
-    allocator := context.allocator
+    position: [2]f32,
+    scale:f32= 1.0,
 ) {
+    pos := rl.Vector2{
+        position.x,
+        position.y
+    }
+    rect := rl.Rectangle{
+        0,
+        0,
+        f32(p.backend.render_texture.texture.width) * scale,
+        -f32(p.backend.render_texture.texture.height) * scale
+    }
+    if p.interactive {
+        rl.DrawTextureRec(p.backend.render_texture.texture, rect, pos, rl.WHITE)
+    } else {
+        log.warn("show: plot is not interactive.")
+    }
 }
 
 @(private="file")
 _build_plot_theme_defaults :: proc(p: ^Plot($T)) {
-    if p.theme.panel_title_font_size <= 0 {
-        p.theme.panel_title_font_size = DefaultTheme.panel_title_font_size
+    if p.theme.panel_title_font == {} {
+        p.theme.panel_title_font = DEFAULT_THEME.panel_title_font
     }
-    if p.theme.plot_title_font_size <= 0 {
-        p.theme.plot_title_font_size = DefaultTheme.plot_title_font_size
+
+    if p.theme.plot_title_font == {} {
+        p.theme.plot_title_font = DEFAULT_THEME.plot_title_font
     }
+
+    if p.theme.axis_label_font == {} {
+        p.theme.axis_label_font = DEFAULT_THEME.axis_label_font
+    }
+
+    if p.theme.axis_tick_font == {} {
+        p.theme.axis_tick_font = DEFAULT_THEME.axis_tick_font
+    }
+
     if p.theme.panel_background == {} {
-        p.theme.panel_background = DefaultTheme.panel_background
+        p.theme.panel_background = DEFAULT_THEME.panel_background
     }
     if p.theme.plot_background == {} {
-        p.theme.plot_background = DefaultTheme.plot_background
+        p.theme.plot_background = DEFAULT_THEME.plot_background
     }
-    if p.theme.text_color == {} { p.theme.text_color = DefaultTheme.text_color }
-    if p.theme.grid_color == {} { p.theme.grid_color = DefaultTheme.grid_color }
+    if p.theme.plot_data_background == {} {
+        p.theme.plot_data_background = DEFAULT_THEME.plot_data_background
+    }
+    if p.theme.text_color == {} { p.theme.text_color = DEFAULT_THEME.text_color }
+    if p.theme.grid_color == {} { p.theme.grid_color = DEFAULT_THEME.grid_color }
+
 }
 
 draw :: proc(
     p: ^Plot($T),
-    format: OutputFormat,
     allocator := context.allocator
-) -> (rt: Graphic, ok: bool) {  // TODO: return a descriptive error.
+) -> (ok: bool) {  // TODO: return a descriptive error.
 
     // A plot that has not been built (or was changed since) is built here,
     // reusing the shape from an earlier build if there was one, so callers can
     // go straight to draw.
     if !p.built {
-        shape := p.shape if p.shape != {} else Shape{800, 600}
-        if !build_plot(p, format, shape, allocator) {
+
+        if !build_plot(p) {
             log.error("plot: draw could not build the plot; check the mapping and layers.")
             return
         }
@@ -520,7 +606,6 @@ draw :: proc(
             ys, ys_ok := _to_f64_slice(y)
 
             if xs_ok == false || ys_ok == false {
-                // TODO
                 log.error("plot: layer data could not be converted to floats.")
                 return
             }
@@ -534,13 +619,14 @@ draw :: proc(
             switch g in layer.geom {
             // TODO: we don't use any the aspects of the Point struct
             case Point:
-                // TODO: we should calculate this every time
+                // TODO: we shouldn't calculate this every time
+                // and how should we clean this up.
                 scatter_index := graphic.make_scatter_point_buffer(x_values, y_values, &p.backend)
                 graphic.draw_data_scatter(
                     .Circle,
                     p.backend.vertex_map[scatter_index],
                     bounds,
-                    DefaultPalette[i],
+                    DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
                     p.backend,
                 )
             case Line:
@@ -554,10 +640,7 @@ draw :: proc(
 
     graphic.end_panel(p.backend)
 
-    #partial switch format {
-    case .Png: 
-        rt.image, ok = graphic.store_frame(p.backend)
-    }
+    ok = true
     return 
 }
 
@@ -566,16 +649,27 @@ SaveError :: union {
     os.Error,
 }
 
-save_graphic :: proc(path: string, g: ^Graphic) -> SaveError {
-    if g.is_svg {
+// TODO: implement save errors
+save_plot :: proc(path: string, p: ^Plot($T), format:= OutputFormat.Png) -> SaveError {
+    image : rl.Image
+    #partial switch format {
+    case .Png: 
+        image, _ = graphic.store_frame(p.backend)
+        graphic.save_frame(image, path)
+        rl.UnloadImage(image)
+    case .Svg:
         panic("svg not implemented.")
-    } else {
-        graphic.save_frame(g.image, path)
     }
+
     return nil
 }
 
-_validate_mapping :: proc(df: ^DataFrame, mapping: Aesthetic) -> (is_ok: bool) {
+save_graphic_to_memory :: proc(p: ^Plot($T)) -> (image: rl.Image, is_ok: bool) {
+    return graphic.store_frame(p.backend)
+}
+
+@(private="file")
+_validate_aes_mapping :: proc(df: ^DataFrame, mapping: Aesthetic) -> (is_ok: bool) {
 
     is_ok = true
     for field in reflect.struct_fields_zipped(Aesthetic) {
@@ -595,6 +689,7 @@ _validate_mapping :: proc(df: ^DataFrame, mapping: Aesthetic) -> (is_ok: bool) {
     return
 }
 
+@(private="file")
 _calc_range :: proc(column: ColumnSlice) -> (v_min, v_max: f64) {
     v_min = math.F32_MAX
     v_max = math.F32_MIN
@@ -646,12 +741,12 @@ _construct_graphic :: proc(p: ^Plot($T), allocator := context.allocator) {
 
     graphic_element : graphic.Graphic
 
-    tick_font  := graphic.Font{
-        inner_font = graphic.DEFAULT_FONT_AXIS_TICK_LABEL,
+    tick_font  := graphic.Font {
+        inner_font = p.theme.axis_tick_font,
         color = p.theme.text_color
     }
     title_font := graphic.Font{
-        inner_font = graphic.DEFAULT_FONT_GRAPHIC_TITLE,
+        inner_font = p.theme.plot_title_font,
         color = p.theme.text_color
     }
 
@@ -701,18 +796,22 @@ _construct_graphic :: proc(p: ^Plot($T), allocator := context.allocator) {
     // plots on the same panel.
     graphic_element.title = ""
     graphic_element.font  = graphic.Font {
-        graphic.DEFAULT_FONT_PANEL_TITLE,
+        p.theme.panel_title_font,
         rl.BLACK
     }
     graphic_element.title_alignment  = .Left
-    graphic_element.background_color = rl.WHITE
-    graphic_element.plot_color       = {75, 75, 75, 255}
+    graphic_element.background_color = p.theme.plot_background
+    graphic_element.plot_color       = p.theme.plot_data_background
 
     // Ticks are drawn on the CPU by end_graphic, so their positions are
     // normalized to 0-1 across the plot area here.
     {
         bounds := _data_bounds(p)
         range  := bounds.max - bounds.min
+
+        assert(range[0] > 0, "_construct_graphic: x range is equal to or less than zero.")
+        assert(range[1] > 0, "_construct_graphic: y range is equal to or less than zero.")
+
         x_ticks := &graphic_element.x_axis.major_tick_config
         x_ticks.first_tick_position = (x_ticks.first_tick_position - bounds.min.x) / range.x
         x_ticks.step_size /= range.x

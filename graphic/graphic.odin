@@ -174,14 +174,14 @@ _get_internal_font :: proc(flag: InternalFont) -> (rawptr, int) {
     return nil, 0
 }
 
-start_plot_backend :: proc(interactive: bool) -> (backend: PlotBackend, is_ok: bool) {
+start_plot_backend :: proc(interactive: bool, width: i32=WIDTH, height: i32=HEIGHT) -> (backend: PlotBackend, is_ok: bool) {
     assert(IS_INIT, "start_plot_backend: function must be called after start_backend")
 
     if interactive == true && IS_INTERACTIVE == false {
         panic("start_plot_backend: caller is attempting to create an interactive plot when the backend is set to be non interactive.")
     }
     backend.interactive = interactive
-    backend.render_texture = rl.LoadRenderTexture(WIDTH, HEIGHT)
+    backend.render_texture = rl.LoadRenderTexture(width, height)
 
     is_ok = true
     return 
@@ -214,7 +214,7 @@ start_backend :: proc(interactive: bool, fonts:= []InnerFont{}, log_tracing:= fa
     }
     IS_INTERACTIVE = interactive
 
-    setup_default_font_map()
+    _setup_default_font_map()
 
     assert(FONT_MAP != nil)
     for inner_font in fonts {
@@ -245,7 +245,8 @@ start_backend :: proc(interactive: bool, fonts:= []InnerFont{}, log_tracing:= fa
     return is_ok
 }
 
-setup_default_font_map :: proc() {
+@(private="file")
+_setup_default_font_map :: proc() {
     if FONT_MAP != nil do return
 
     fonts := []InnerFont{
@@ -282,7 +283,7 @@ cleanup_font_map :: proc() {
     clear_map(&FONT_MAP)
 }
 
-close_backend :: proc(backend: PlotBackend) {
+close_backend :: proc(backend: PlotBackend, close_window:=false) {
 
     // GPU objects must be released before CloseWindow destroys the GL context.
     for vertex_obj in backend.vertex_map {
@@ -293,7 +294,13 @@ close_backend :: proc(backend: PlotBackend) {
     delete(backend.vertex_map)
 
     rl.UnloadRenderTexture(backend.render_texture)
-    rl.CloseWindow()
+
+
+    if close_window {
+        IS_INIT = false
+        clear(&FONT_MAP)
+        rl.CloseWindow()
+    }
 }
 
 // Must be called after rl.BeginDrawing is called.
@@ -675,6 +682,8 @@ draw_data_scatter :: proc(
 
     if symbol != .Circle do panic("Symbol is not circle. Other symbols have not ben implemented.")
     shader := POINT_SHADER
+    width  := f32(backend.render_texture.texture.width)
+    height := f32(backend.render_texture.texture.height)
 
     rlgl.DrawRenderBatchActive()
     resolution_loc     := rl.GetShaderLocation(shader, "resolution")
@@ -685,7 +694,10 @@ draw_data_scatter :: proc(
     data_min_loc       := rl.GetShaderLocation(shader, "data_min")
     data_range_loc     := rl.GetShaderLocation(shader, "data_range")
 
-    resolution := [2]f32{f32(WIDTH), f32(HEIGHT)}
+    resolution := [2]f32{
+        f32(backend.render_texture.texture.width),
+        f32(backend.render_texture.texture.height)
+    }
     radius     := POINT_RADIUS
     color      := [4]f32{
         f32(color.r),
@@ -695,12 +707,12 @@ draw_data_scatter :: proc(
     } / 255
 
     scale: [2]f32 = {
-        CURRENT_GRAPHIC_PLOT_RECT.width / f32(backend.render_texture.texture.width),
-        CURRENT_GRAPHIC_PLOT_RECT.height / f32(backend.render_texture.texture.height),
+        CURRENT_GRAPHIC_PLOT_RECT.width / width,
+        CURRENT_GRAPHIC_PLOT_RECT.height / height,
     }
     translate: [2]f32 = {
-        CURRENT_GRAPHIC_PLOT_RECT.x / f32(backend.render_texture.texture.width),
-        CURRENT_GRAPHIC_PLOT_RECT.y / f32(backend.render_texture.texture.height),
+        CURRENT_GRAPHIC_PLOT_RECT.x / width,
+        CURRENT_GRAPHIC_PLOT_RECT.y / height,
     }
 
     data_min   := bounds.min
