@@ -108,6 +108,7 @@ main :: proc() {
         // background color
         rl.WHITE,
         rl.WHITE,
+        {}
     }
 
     width := f32(backend.render_texture.texture.width)
@@ -129,7 +130,7 @@ main :: proc() {
         begin_panel(panel, backend)
 
         // axis is off.
-        begin_graphic(graphic, dst_rect)
+        begin_graphic(&graphic, dst_rect)
 
             draw_data_scatter(
                 .Circle,

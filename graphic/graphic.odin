@@ -75,6 +75,18 @@ Graphic :: struct {
     // background color
     background_color: Color,
     plot_color: Color,
+
+    positions : GraphicPositions
+}
+
+GraphicPositions :: struct {
+    dst_rect          : Rectangle,
+    title_rect        : Rectangle,
+    x_axis_title_rect : Rectangle,
+    y_axis_title_rect : Rectangle,
+    x_axis_rect       : Rectangle,
+    y_axis_rect       : Rectangle,
+    plot_rect         : Rectangle,
 }
 
 GraphicType :: enum {
@@ -378,7 +390,7 @@ make_scatter_point_buffer :: proc(x_values, y_values: []f32, backend: ^PlotBacke
     return len(backend.vertex_map) - 1
 }
 
-begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
+begin_graphic :: proc(graphic: ^Graphic, dst_rect: Rectangle) {
 
     temp_allocator := context.temp_allocator
     CURRENT_GRAPHIC_DST_RECT = dst_rect
@@ -389,7 +401,6 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
         font := get_font(graphic.font.inner_font)
         title_shape := rl.MeasureTextEx(font, c_title, graphic.font.size, 0)
 
-        // TODO: inefficient
         if len(graphic.title) == 0 do title_shape = {0, 0}
 
         CURRENT_GRAPHIC_TITLE_RECT = {
@@ -425,7 +436,7 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
         // The y axis title runs along the left edge, between the graphic title
         // and the bottom of the graphic. Alignment is along the axis: Left is
         // the bottom (where bottom-to-top text starts), Right is the top.
-        span_top    := _calc_span_top()  // CURRENT_GRAPHIC_TITLE_RECT.y + CURRENT_GRAPHIC_TITLE_RECT.height + PADDING
+        span_top    := _calc_span_top()
 
         CURRENT_GRAPHIC_Y_AXIS_TITLE_RECT = {
             2*PADDING,
@@ -551,6 +562,14 @@ begin_graphic :: proc(graphic: Graphic, dst_rect: Rectangle) {
         i32(CURRENT_GRAPHIC_PLOT_RECT.width),
         i32(CURRENT_GRAPHIC_PLOT_RECT.height),
     )
+
+    graphic.positions.dst_rect   = CURRENT_GRAPHIC_DST_RECT
+    graphic.positions.title_rect = CURRENT_GRAPHIC_TITLE_RECT
+    graphic.positions.x_axis_title_rect = CURRENT_GRAPHIC_X_AXIS_TITLE_RECT
+    graphic.positions.y_axis_title_rect = CURRENT_GRAPHIC_Y_AXIS_TITLE_RECT
+    graphic.positions.x_axis_rect = CURRENT_GRAPHIC_X_AXIS_RECT
+    graphic.positions.y_axis_rect = CURRENT_GRAPHIC_Y_AXIS_RECT
+    graphic.positions.plot_rect   = CURRENT_GRAPHIC_PLOT_RECT
 }
 
 end_graphic :: proc(graphic: Graphic) {
@@ -575,6 +594,7 @@ draw_axis :: proc(axis: Axis, orientation: Orientation) {
         title_rect = CURRENT_GRAPHIC_Y_AXIS_TITLE_RECT
     }
 
+    // TODO: why do we do this here? Why don't we do this when we originally calculate rects?
     // The layout rects are relative to the graphic's destination rect.
     axis_rect.x  += dst.x
     axis_rect.y  += dst.y
@@ -678,6 +698,7 @@ draw_data_scatter :: proc(
     bounds: DataBounds,
     color: Color,
     backend: PlotBackend,
+    _radius:= POINT_RADIUS
 ) {
 
     if symbol != .Circle do panic("Symbol is not circle. Other symbols have not ben implemented.")
@@ -698,7 +719,6 @@ draw_data_scatter :: proc(
         f32(backend.render_texture.texture.width),
         f32(backend.render_texture.texture.height)
     }
-    radius     := POINT_RADIUS
     color      := [4]f32{
         f32(color.r),
         f32(color.g),
@@ -714,6 +734,7 @@ draw_data_scatter :: proc(
         CURRENT_GRAPHIC_PLOT_RECT.x / width,
         CURRENT_GRAPHIC_PLOT_RECT.y / height,
     }
+    radius := _radius
 
     data_min   := bounds.min
     data_range := bounds.max - bounds.min

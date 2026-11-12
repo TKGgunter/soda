@@ -595,7 +595,7 @@ draw :: proc(
     {
         graphic.begin_panel(p.panel, p.backend)
 
-        graphic.begin_graphic(p.graphic_element, p.graphic_rect)
+        graphic.begin_graphic(&p.graphic_element, p.graphic_rect)
 
         bounds := _data_bounds(p)
 
@@ -628,6 +628,7 @@ draw :: proc(
                     bounds,
                     DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
                     p.backend,
+                    g.size
                 )
             case Line:
                 panic("Error: Line has not been implemented.")
