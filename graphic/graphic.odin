@@ -447,16 +447,18 @@ begin_graphic :: proc(graphic: ^Graphic, dst_rect: Rectangle) {
 
         // TODO: handle tick label rotations
         {
+
+            tick_label_font := get_font(y_axis.major_tick_label_font)
             max_width :f32= 0
             for it in y_axis.major_tick_labels {
                 c_tick_label := strings.clone_to_cstring(it, temp_allocator)
-                y_axis_title_shape := rl.MeasureTextEx(font, c_tick_label, y_axis.title_font.size, 0)
+                y_axis_title_shape := rl.MeasureTextEx(tick_label_font, c_tick_label, y_axis.major_tick_label_font.size, 0)
                 max_width = max(max_width, y_axis_title_shape.x) 
             }
 
             cgyatr := CURRENT_GRAPHIC_Y_AXIS_TITLE_RECT 
             CURRENT_GRAPHIC_Y_AXIS_RECT = {
-                cgyatr.x + cgyatr.width + 2 * PADDING + TICK_WIDTH + max_width,
+                cgyatr.x + cgyatr.width + 4 * PADDING + TICK_WIDTH + max_width,
                 span_top,
                 AXIS_WIDTH,
                 0 // Deduce later in the source code.
