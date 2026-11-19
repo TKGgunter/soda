@@ -580,7 +580,7 @@ exec :: proc(
 }
 
 @(test)
-and_operator :: proc(t: ^testing.T) {
+t_and_operator :: proc(t: ^testing.T) {
     df := make_dataframe_from_literal(
         {"One", "Two", "Three"},
         []int{1, 2, 3},
@@ -618,7 +618,7 @@ and_operator :: proc(t: ^testing.T) {
 }
 
 @(test)
-or_operator :: proc(t: ^testing.T) {
+t_or_operator :: proc(t: ^testing.T) {
     df := make_dataframe_from_literal(
         {"One", "Two", "Three"},
         []int{1, 2, 3},
